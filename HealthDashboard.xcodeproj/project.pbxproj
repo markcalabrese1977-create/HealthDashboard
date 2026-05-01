@@ -6,14 +6,82 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		D55406C42F219CCF00967963 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D55406C32F219CCF00967963 /* WidgetKit.framework */; };
+		D55406C62F219CCF00967963 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D55406C52F219CCF00967963 /* SwiftUI.framework */; };
+		D55406D52F219CD000967963 /* HealthDashboardWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = D55406C12F219CCF00967963 /* HealthDashboardWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		D55406D32F219CD000967963 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = D55406A52F219C1400967963 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D55406C02F219CCF00967963;
+			remoteInfo = HealthDashboardWidgetExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		D55406DA2F219CD000967963 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				D55406D52F219CD000967963 /* HealthDashboardWidgetExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		D55406AD2F219C1400967963 /* HealthDashboard.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HealthDashboard.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		D55406C12F219CCF00967963 /* HealthDashboardWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = HealthDashboardWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		D55406C32F219CCF00967963 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		D55406C52F219CCF00967963 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		D55406DC2F219D8A00967963 /* HealthDashboardWidgetExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = HealthDashboardWidgetExtension.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		D55406D62F219CD000967963 /* Exceptions for "HealthDashboardWidget" folder in "HealthDashboardWidgetExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = D55406C02F219CCF00967963 /* HealthDashboardWidgetExtension */;
+		};
+		D55406E22F219DD800967963 /* Exceptions for "HealthDashboard" folder in "HealthDashboardWidgetExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Health/ReadinessEngine.swift,
+				Shared/BodyMeasurementsUI.swift,
+				Shared/DashboardCard.swift,
+				Shared/DXAUI.swift,
+				Shared/SharedHealthSnapshot.swift,
+				Shared/Sparkline.swift,
+				Shared/TrendUI.swift,
+			);
+			target = D55406C02F219CCF00967963 /* HealthDashboardWidgetExtension */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		D55406AF2F219C1400967963 /* HealthDashboard */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				D55406E22F219DD800967963 /* Exceptions for "HealthDashboard" folder in "HealthDashboardWidgetExtension" target */,
+			);
 			path = HealthDashboard;
+			sourceTree = "<group>";
+		};
+		D55406C72F219CCF00967963 /* HealthDashboardWidget */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				D55406D62F219CD000967963 /* Exceptions for "HealthDashboardWidget" folder in "HealthDashboardWidgetExtension" target */,
+			);
+			path = HealthDashboardWidget;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -26,13 +94,25 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		D55406BE2F219CCF00967963 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D55406C62F219CCF00967963 /* SwiftUI.framework in Frameworks */,
+				D55406C42F219CCF00967963 /* WidgetKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		D55406A42F219C1400967963 = {
 			isa = PBXGroup;
 			children = (
+				D55406DC2F219D8A00967963 /* HealthDashboardWidgetExtension.entitlements */,
 				D55406AF2F219C1400967963 /* HealthDashboard */,
+				D55406C72F219CCF00967963 /* HealthDashboardWidget */,
+				D55406C22F219CCF00967963 /* Frameworks */,
 				D55406AE2F219C1400967963 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -41,8 +121,18 @@
 			isa = PBXGroup;
 			children = (
 				D55406AD2F219C1400967963 /* HealthDashboard.app */,
+				D55406C12F219CCF00967963 /* HealthDashboardWidgetExtension.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		D55406C22F219CCF00967963 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				D55406C32F219CCF00967963 /* WidgetKit.framework */,
+				D55406C52F219CCF00967963 /* SwiftUI.framework */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -55,10 +145,12 @@
 				D55406A92F219C1400967963 /* Sources */,
 				D55406AA2F219C1400967963 /* Frameworks */,
 				D55406AB2F219C1400967963 /* Resources */,
+				D55406DA2F219CD000967963 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				D55406D42F219CD000967963 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				D55406AF2F219C1400967963 /* HealthDashboard */,
@@ -69,6 +161,28 @@
 			productName = HealthDashboard;
 			productReference = D55406AD2F219C1400967963 /* HealthDashboard.app */;
 			productType = "com.apple.product-type.application";
+		};
+		D55406C02F219CCF00967963 /* HealthDashboardWidgetExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D55406D72F219CD000967963 /* Build configuration list for PBXNativeTarget "HealthDashboardWidgetExtension" */;
+			buildPhases = (
+				D55406BD2F219CCF00967963 /* Sources */,
+				D55406BE2F219CCF00967963 /* Frameworks */,
+				D55406BF2F219CCF00967963 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				D55406C72F219CCF00967963 /* HealthDashboardWidget */,
+			);
+			name = HealthDashboardWidgetExtension;
+			packageProductDependencies = (
+			);
+			productName = HealthDashboardWidgetExtension;
+			productReference = D55406C12F219CCF00967963 /* HealthDashboardWidgetExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -81,6 +195,9 @@
 				LastUpgradeCheck = 2620;
 				TargetAttributes = {
 					D55406AC2F219C1400967963 = {
+						CreatedOnToolsVersion = 26.2;
+					};
+					D55406C02F219CCF00967963 = {
 						CreatedOnToolsVersion = 26.2;
 					};
 				};
@@ -100,12 +217,20 @@
 			projectRoot = "";
 			targets = (
 				D55406AC2F219C1400967963 /* HealthDashboard */,
+				D55406C02F219CCF00967963 /* HealthDashboardWidgetExtension */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		D55406AB2F219C1400967963 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D55406BF2F219CCF00967963 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -122,7 +247,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		D55406BD2F219CCF00967963 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		D55406D42F219CD000967963 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D55406C02F219CCF00967963 /* HealthDashboardWidgetExtension */;
+			targetProxy = D55406D32F219CD000967963 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		D55406B82F219C1500967963 /* Debug */ = {
@@ -246,6 +386,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = HealthDashboard/HealthDashboard.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 4QU96N83NX;
@@ -254,6 +395,8 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app reads health metrics to show your dashboard and widget trends.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "This app writes your latest dashboard snapshot for the widget.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -290,6 +433,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = HealthDashboard/HealthDashboard.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 4QU96N83NX;
@@ -298,6 +442,8 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app reads health metrics to show your dashboard and widget trends.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "This app writes your latest dashboard snapshot for the widget.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -329,6 +475,73 @@
 			};
 			name = Release;
 		};
+		D55406D82F219CD000967963 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_ENTITLEMENTS = HealthDashboardWidgetExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4QU96N83NX;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = HealthDashboardWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = HealthDashboardWidget;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.calabrese.HealthDashboard.HealthDashboardWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		D55406D92F219CD000967963 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_ENTITLEMENTS = HealthDashboardWidgetExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4QU96N83NX;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = HealthDashboardWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = HealthDashboardWidget;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.calabrese.HealthDashboard.HealthDashboardWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -346,6 +559,15 @@
 			buildConfigurations = (
 				D55406BB2F219C1500967963 /* Debug */,
 				D55406BC2F219C1500967963 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		D55406D72F219CD000967963 /* Build configuration list for PBXNativeTarget "HealthDashboardWidgetExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D55406D82F219CD000967963 /* Debug */,
+				D55406D92F219CD000967963 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
