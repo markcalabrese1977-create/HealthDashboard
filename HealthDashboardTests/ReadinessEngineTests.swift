@@ -213,7 +213,7 @@ final class ReadinessEngineTests: XCTestCase {
         XCTAssertNotEqual(result.truth, .red)
     }
     
-    func testHRVDropOverSeveralDaysAloneDoesNotForceYellow() {
+    func testHRVDropOverSeveralDaysTriggersYellow() {
         var hist = (1...24).map { point(day: $0, hrv: 30) }
 
         hist += [
@@ -228,8 +228,8 @@ final class ReadinessEngineTests: XCTestCase {
             manual: .default
         )
 
-        XCTAssertEqual(result.truth, .green)
-        XCTAssertEqual(result.driverSummary, "HRV ↓")
+        XCTAssertEqual(result.truth, .yellow)
+        XCTAssertEqual(result.driverSummary, "HRV ↓ (isolated)")
     }
     
     func testGoodSleepOffsetsMinorHRVDrop() {
@@ -331,6 +331,52 @@ final class ReadinessEngineTests: XCTestCase {
         XCTAssertNotEqual(result.truth, .red)
         XCTAssertNotEqual(result.action, .red)
         //XCTAssertTrue(result.driverSummary.contains("HRV"))
+    }
+    
+    func testStrongRecoveryBuffersLowHRV() {
+        var hist = (1...24).map { point(day: $0, hrv: 30) }
+
+        hist += [
+            point(day: 25, hrv: 24),
+            point(day: 26, hrv: 24),
+            point(day: 27, hrv: 24),
+            point(
+                day: 28,
+                rhr: 66,
+                hrv: 18.8,
+                sleep: 9.7,
+                inBed: 9.9,
+                rr: 18.8,
+                temp: 36.0
+            )
+        ]
+
+        let result = ReadinessEngine.evaluate(
+            history: hist,
+            manual: ManualReadinessInputs(painLevel: 1, isSick: false)
+        )
+
+        XCTAssertEqual(result.truth, .green)
+        XCTAssertNotEqual(result.action, .red)
+        XCTAssertEqual(result.driverSummary, "HRV ↓ (isolated)")
+    }
+    
+    func testHRVTrendPlusAnotherSignalForcesYellow() {
+        var hist = (1...24).map { point(day: $0, rhr: 65, hrv: 30) }
+
+        hist += [
+            point(day: 25, rhr: 66, hrv: 28),
+            point(day: 26, rhr: 67, hrv: 26),
+            point(day: 27, rhr: 69, hrv: 24),
+            point(day: 28, rhr: 72, hrv: 22)
+        ]
+
+        let result = ReadinessEngine.evaluate(
+            history: hist,
+            manual: .default
+        )
+
+        XCTAssertEqual(result.truth, ReadinessStatus.yellow)
     }
     
 }

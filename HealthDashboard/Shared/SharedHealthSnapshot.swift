@@ -186,14 +186,42 @@ struct ReadinessResult: Equatable {
 }
 extension ReadinessResult {
     var driverSummary: String {
-        guard !drivers.isEmpty else { return "No major drivers" }
+        if drivers.isEmpty {
+            return "No meaningful deviations"
+        }
+
+        let negatives = drivers.filter { $0.isNegative }
+
+        if negatives.count >= 2 {
+            return negatives
+                .map { "\($0.label) ↓" }
+                .joined(separator: ", ")
+        }
+
+        if negatives.count == 1, let d = negatives.first {
+            return "\(d.label) ↓ (isolated)"
+        }
 
         return drivers
-            .map {
-                let arrow = $0.isNegative ? "↑" : "↓"
-                return "\($0.label) \(arrow)"
-            }
+            .map { "\($0.label) \($0.isNegative ? "↓" : "↑")" }
             .joined(separator: ", ")
+    }
+    var explanationSummary: String {
+        if drivers.isEmpty {
+            return "No major recovery concerns detected."
+        }
+
+        let negativeDrivers = drivers.filter { $0.isNegative }
+
+        if negativeDrivers.count >= 2 {
+            return "Multiple recovery signals are under baseline."
+        }
+
+        if negativeDrivers.contains(where: { $0.label == "HRV" }) {
+            return "HRV is down, but the overall readiness decision accounts for the full recovery picture."
+        }
+
+        return "Readiness is being shaped by \(driverSummary)."
     }
 }
 // MARK: - App Group Store + Debug Hooks

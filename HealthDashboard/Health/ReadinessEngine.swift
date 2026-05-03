@@ -115,12 +115,18 @@ enum ReadinessEngine {
            let base = hrvBase, base > 0 {
             let d = pctDelta(current: cur, base: base)
             switch d {
-            case (-0.05)...(0.05): hrvScore = 0
-            case (-0.12)...(-0.05): hrvScore = -1
-            case (-0.20)...(-0.12): hrvScore = -2
-            case ..<(-0.20): hrvScore = -3
-            case (0.05)...(0.12): hrvScore = +1
-            default: hrvScore = +2
+            case (-0.05)...(0.05):
+                hrvScore = 0
+            case (-0.12)...(-0.05):
+                hrvScore = -1
+            case (-0.30)...(-0.12):
+                hrvScore = -2
+            case ..<(-0.30):
+                hrvScore = -3
+            case (0.05)...(0.12):
+                hrvScore = +1
+            default:
+                hrvScore = +2
             }
             if hrvScore < 0 { flags.append("HRV ↓") }
         }
@@ -202,8 +208,34 @@ enum ReadinessEngine {
         let sickScore: Int = manual.isSick ? -4 : 0
         if manual.isSick { flags.append("Sick") }
 
+        let hrvBufferedByStrongRecovery: Bool = {
+            guard hrvScore == -2 else { return false }
+
+            let rhrStableOrGood = rhrScore >= 0
+            let sleepStrong = sleepScore >= 0
+            let sleepQualityGood = sleepEffScore >= 0
+            let rrStable = rrScore >= 0
+            let tempStable = tempScore >= 0
+            let noManualProblem = painScore == 0 && sickScore == 0
+
+            return rhrStableOrGood &&
+                   sleepStrong &&
+                   sleepQualityGood &&
+                   rrStable &&
+                   tempStable &&
+                   noManualProblem
+        }()
+
+        let adjustedHRVScore: Int = {
+            if hrvScore == -2 && hrvBufferedByStrongRecovery {
+                return -1
+            }
+
+            return hrvScore
+        }()
+
         let recoveryScore =
-            hrvScore + rhrScore + sleepScore + sleepEffScore + tempScore + spo2Score + rrScore
+            adjustedHRVScore + rhrScore + sleepScore + sleepEffScore + tempScore + spo2Score + rrScore
             + painScore + sickScore
 
         // MARK: - Load / Stress modifier (separate from recovery)
@@ -244,6 +276,26 @@ enum ReadinessEngine {
                   let base = hrvBase, base > 0 else { return false }
             return pctDelta(current: cur, base: base) <= -0.10
         }()
+        
+        let hrvDownTrend: Bool = {
+            let last4 = Array(full.suffix(4))
+                .compactMap { $0.hrvMS }
+                .filter { $0 >= 5 && $0 <= 250 }
+
+            guard last4.count == 4 else { return false }
+
+            let strictlyDescending =
+                last4[0] > last4[1] &&
+                last4[1] > last4[2] &&
+                last4[2] > last4[3]
+
+            guard strictlyDescending else { return false }
+
+            let totalDrop = last4[0] - last4[3]
+            let totalDropPct = totalDrop / last4[0]
+
+            return totalDropPct >= 0.15
+        }()
 
         let rhrUp4: Bool = {
             guard let cur = today?.restingHR,
@@ -277,7 +329,14 @@ enum ReadinessEngine {
 
         // Cluster now includes: HRV down, RHR up, short sleep, temp up, RR up, sleep quality down, sick
         let clusterCount = [
-            hrvDown10, rhrUp4, sleepShort1, tempUp03, rrUp10, sleepEffLow, sickFlag
+            hrvDown10,
+            hrvDownTrend,
+            rhrUp4,
+            sleepShort1,
+            tempUp03,
+            rrUp10,
+            sleepEffLow,
+            sickFlag
         ].filter { $0 }.count
 
         let forceYellow = clusterCount >= 2
@@ -377,8 +436,8 @@ enum ReadinessEngine {
         print("  Today:   HRV=\(fmt(hrvCur)) RHR=\(fmt(rhrCur)) Sleep=\(fmt(sleepCur)) InBed=\(fmt(inBedCur)) Eff=\(fmt(effCur)) RR=\(fmt(rrCur)) Temp=\(fmt(tempCur)) SpO2=\(fmt(spo2Cur))")
         print("  Base:    HRV=\(fmt(hrvBase)) RHR=\(fmt(rhrBase)) SleepBase=\(fmt(sleepBase)) SleepTarget=\(String(format: "%.2f", sleepTarget)) EffBase=\(fmt(effBase)) RRBase=\(fmt(rrBase)) TempBase=\(fmt(tempBase)) SpO2=\(fmt(spo2Base))")
         print("  Δ:       HRV=\(fmtPct(hrvDeltaPct)) RHR=\(fmt(rhrDeltaAbs)) Sleep=\(fmt(sleepDeltaAbs)) Eff=\(fmt(effDeltaAbs)) RR=\(fmt(rrDeltaAbs)) Temp=\(fmt(tempDeltaAbs)) SpO2=\(fmt(spo2DeltaAbs))")
-        print("  Scores:  HRV=\(hrvScore) RHR=\(rhrScore) Sleep=\(sleepScore) Eff=\(sleepEffScore) RR=\(rrScore) Temp=\(tempScore) SpO2=\(spo2Score) pain=\(painScore) sick=\(sickScore) recovery=\(recoveryScore) load=\(loadMod) total=\(total)")
-        print("  Cluster: hrvDown10=\(hrvDown10) rhrUp4=\(rhrUp4) sleepShort1=\(sleepShort1) sleepEffLow=\(sleepEffLow) rrUp10=\(rrUp10) tempUp03=\(tempUp03) sick=\(sickFlag) count=\(clusterCount) forceY=\(forceYellow) forceR=\(forceRed)")
+        print("  Scores:  HRV(raw)=\(hrvScore) HRV(adj)=\(adjustedHRVScore) buffered=\(hrvBufferedByStrongRecovery) RHR=\(rhrScore) Sleep=\(sleepScore) Eff=\(sleepEffScore) RR=\(rrScore) Temp=\(tempScore) SpO2=\(spo2Score) pain=\(painScore) sick=\(sickScore) recovery=\(recoveryScore) load=\(loadMod) total=\(total)")
+        print("  Cluster: hrvDown10=\(hrvDown10) hrvTrend=\(hrvDownTrend) rhrUp4=\(rhrUp4) sleepShort1=\(sleepShort1) sleepEffLow=\(sleepEffLow) rrUp10=\(rrUp10) tempUp03=\(tempUp03) sick=\(sickFlag) count=\(clusterCount) forceY=\(forceYellow) forceR=\(forceRed)")
         print("  Output:  truth=\(truth.title) action=\(action.title) canPush=\(canPushKeyLift)")
         #endif
 
@@ -410,16 +469,45 @@ enum ReadinessEngine {
             today?.respiratoryRate != nil
         ].filter { $0 }.count
 
+        let conflictingSignals = (
+            hrvScore < 0 &&
+            rhrScore >= 0 &&
+            sleepScore >= 0 &&
+            sleepEffScore >= 0 &&
+            rrScore >= 0 &&
+            tempScore >= 0
+        )
+
+        let signalAgreementCount = [
+            hrvScore < 0,
+            rhrScore < 0,
+            sleepScore < 0,
+            sleepEffScore < 0,
+            rrScore < 0,
+            tempScore < 0,
+            spo2Score < 0,
+            painScore < 0,
+            sickScore < 0
+        ].filter { $0 }.count
+
         let confidence: ReadinessConfidence = {
-            if availableHighTrustSignals >= 3 && availableCoreSignals >= 5 {
-                return .high
+            if availableHighTrustSignals < 2 || availableCoreSignals < 3 {
+                return .low
             }
 
-            if availableHighTrustSignals >= 2 && availableCoreSignals >= 3 {
+            if conflictingSignals {
                 return .medium
             }
 
-            return .low
+            if availableHighTrustSignals >= 3 && availableCoreSignals >= 5 && signalAgreementCount >= 2 {
+                return .high
+            }
+
+            if availableHighTrustSignals >= 3 && availableCoreSignals >= 5 && signalAgreementCount == 0 {
+                return .high
+            }
+
+            return .medium
         }()
         
         var drivers: [ReadinessDriver] = []
@@ -427,7 +515,7 @@ enum ReadinessEngine {
         func addDriver(_ label: String, _ score: Int) {
             guard score != 0 else { return }
 
-            let isNegative = score > 0
+            let isNegative = score < 0
 
             drivers.append(
                 ReadinessDriver(
@@ -438,7 +526,7 @@ enum ReadinessEngine {
             )
         }
 
-        addDriver("HRV", hrvScore)
+        addDriver("HRV", adjustedHRVScore)
         addDriver("RHR", rhrScore)
         addDriver("Sleep", sleepScore)
         addDriver("Sleep Quality", sleepEffScore)

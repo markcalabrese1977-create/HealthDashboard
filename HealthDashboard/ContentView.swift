@@ -326,6 +326,10 @@ struct ContentView: View {
                             Text("Driven by: \(readiness.driverSummary)")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                            
+                            Text(readiness.explanationSummary)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
 
                             Button { showActionDialog = true } label: {
                                 let iconName: String = {
