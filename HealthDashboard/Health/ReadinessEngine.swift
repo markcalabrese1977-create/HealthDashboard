@@ -384,13 +384,30 @@ enum ReadinessEngine {
 
         
         
-        return ReadinessResult(
-            truth: truth,
-            action: action,
-            flags: Array(uniqueFlags),
-            actionTitle: actionTitle,
-            actionMessage: actionMessage,
-            canPushKeyLift: canPushKeyLift
-        )
+        let hrvDeltaMS: Double? = {
+                    guard let pct = hrvDeltaPct, let base = hrvBase else { return nil }
+                    return pct * base
+                }()
+
+        let effDeltaForResult: Double? = {
+                            guard let cur = efficiency(asleep: today?.sleepHours, inBed: today?.sleepInBedHours),
+                                  let base = effBase else { return nil }
+                            return cur - base
+                        }()
+
+                        return ReadinessResult(
+                            truth: truth,
+                            action: action,
+                            flags: Array(uniqueFlags),
+                            actionTitle: actionTitle,
+                            actionMessage: actionMessage,
+                            canPushKeyLift: canPushKeyLift,
+                            rhrDelta: rhrDeltaAbs,
+                            hrvDelta: hrvDeltaMS,
+                            sleepDelta: sleepDeltaAbs,
+                            tempDelta: tempDeltaAbs,
+                            rrDelta: rrDeltaAbs,
+                            effDelta: effDeltaForResult
+                        )
     }
 }

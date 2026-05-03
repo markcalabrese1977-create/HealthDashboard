@@ -154,7 +154,13 @@ struct ReadinessResult: Equatable {
     var flags: [String]                 // top drivers
     var actionTitle: String
     var actionMessage: String
-    var canPushKeyLift: Bool            // general “push permission”
+    var canPushKeyLift: Bool            // general "push permission"
+    var rhrDelta: Double?               // today - baseline bpm
+    var hrvDelta: Double?               // today - baseline ms
+    var sleepDelta: Double?             // today - sleepTarget hours
+    var tempDelta: Double?              // today - baseline °C
+    var rrDelta: Double?                // today - baseline br/min
+    var effDelta: Double?               // today - baseline efficiency (0–1 scale)
 }
 
 // MARK: - App Group Store + Debug Hooks

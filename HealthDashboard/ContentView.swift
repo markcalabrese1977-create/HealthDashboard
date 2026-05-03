@@ -63,6 +63,28 @@ struct ContentView: View {
     }
 
     private var latestRespRate: Double? { latestNonNil(\.respiratoryRate) }
+
+        private var latestSleepEff: Double? {
+            guard let asleep = history.last?.sleepHours,
+                  let inBed = history.last?.sleepInBedHours,
+                  inBed > 0 else { return nil }
+            return asleep / inBed
+        }
+
+    private var recoverySparklines: (rhr: [Double], hrv: [Double], sleep: [Double], temp: [Double], rr: [Double], eff: [Double]) {
+            let pts = Array(history.suffix(7))
+            return (
+                rhr:   pts.compactMap { $0.restingHR.map { Double($0) } },
+                hrv:   pts.compactMap { $0.hrvMS },
+                sleep: pts.compactMap { $0.sleepHours },
+                temp:  pts.compactMap { $0.wristTempDeltaC },
+                rr:    pts.compactMap { $0.respiratoryRate },
+                            eff:   pts.compactMap {
+                                guard let a = $0.sleepHours, let b = $0.sleepInBedHours, b > 0 else { return nil }
+                                return a / b
+                            }
+                        )
+                    }
     private var latestSpO2: Double? { latestNonNil(\.spo2Pct) }
 
     private func fmtSigned1(_ v: Double?) -> String {
@@ -384,36 +406,76 @@ struct ContentView: View {
                     ) {
                         let cols = [GridItem(.flexible()), GridItem(.flexible())]
                         LazyVGrid(columns: cols, spacing: 10) {
-                            MetricTile(title: "Resting HR", subtitle: "Latest", value: "\(snapshot.restingHR)", unit: "bpm", systemImage: "heart.fill")
-                            MetricTile(title: "HRV", subtitle: "Overnight", value: "\(snapshot.hrv)", unit: "ms", systemImage: "waveform.path.ecg")
-                            MetricTile(title: "Sleep", subtitle: "Asleep", value: fmtSleepHM(snapshot.sleepHours), unit: "", systemImage: "bed.double.fill")
-                            MetricTile(title: "In Bed", subtitle: "Window (est.)", value: fmtSleepHM(snapshot.sleepInBedHours), unit: "", systemImage: "bed.double.fill")
+                            MetricTile(
+                                                            title: "Resting HR", subtitle: "Latest",
+                                                            value: "\(snapshot.restingHR)", unit: "bpm",
+                                                            systemImage: "heart.fill",
+                                                            sparkValues: recoverySparklines.rhr,
+                                                            delta: readiness.rhrDelta, deltaUnit: "bpm",
+                                                            higherIsBetter: false
+                                                        )
+                                                        MetricTile(
+                                                            title: "HRV", subtitle: "Overnight",
+                                                            value: "\(snapshot.hrv)", unit: "ms",
+                                                            systemImage: "waveform.path.ecg",
+                                                            sparkValues: recoverySparklines.hrv,
+                                                            delta: readiness.hrvDelta, deltaUnit: "ms",
+                                                            higherIsBetter: true
+                                                        )
+                                                        MetricTile(
+                                                            title: "Sleep", subtitle: "Asleep",
+                                                            value: fmtSleepHM(snapshot.sleepHours), unit: "",
+                                                            systemImage: "bed.double.fill",
+                                                            sparkValues: recoverySparklines.sleep,
+                                                            delta: readiness.sleepDelta, deltaUnit: "h",
+                                                            higherIsBetter: true
+                                                        )
+                                                        
+                                                        if wristTempDisplayDelta != nil {
+                                                            MetricTile(
+                                                                title: "Wrist Temp", subtitle: "Δ vs baseline",
+                                                                value: fmtSigned1(wristTempDisplayDelta), unit: "°C",
+                                                                systemImage: "thermometer",
+                                                                sparkValues: recoverySparklines.temp,
+                                                                delta: readiness.tempDelta, deltaUnit: "°C",
+                                                                higherIsBetter: false
+                                                            )
+                                                        } else {
+                                                            MetricTile(
+                                                                title: "Updated", subtitle: "",
+                                                                value: snapshot.updatedAt.formatted(date: .abbreviated, time: .shortened),
+                                                                unit: "", systemImage: "clock", isDateTime: true
+                                                            )
+                                                        }
 
-                            if wristTempDisplayDelta != nil {
-                                MetricTile(
-                                    title: "Wrist Temp",
-                                    subtitle: "Δ vs baseline",
-                                    value: fmtSigned1(wristTempDisplayDelta),
-                                    unit: "°C",
-                                    systemImage: "thermometer"
-                                )
-                            } else {
-                                MetricTile(
-                                    title: "Updated",
-                                    subtitle: "",
-                                    value: snapshot.updatedAt.formatted(date: .abbreviated, time: .shortened),
-                                    unit: "",
-                                    systemImage: "clock",
-                                    isDateTime: true
-                                )
-                            }
-
-                            if latestRespRate != nil {
-                                MetricTile(title: "Resp Rate", subtitle: "Sleep avg", value: fmt1(latestRespRate), unit: "br/min", systemImage: "lungs.fill")
-                            }
-                            if latestSpO2 != nil {
-                                MetricTile(title: "SpO2", subtitle: "Sleep avg", value: fmt1(latestSpO2), unit: "%", systemImage: "drop.fill")
-                            }
+                                                        if latestRespRate != nil {
+                                                            MetricTile(
+                                                                title: "Resp Rate", subtitle: "Sleep avg",
+                                                                value: fmt1(latestRespRate), unit: "br/min",
+                                                                systemImage: "lungs.fill",
+                                                                sparkValues: recoverySparklines.rr,
+                                                                delta: readiness.rrDelta, deltaUnit: "br/min",
+                                                                higherIsBetter: false
+                                                            )
+                                                        }
+                                                        if let eff = latestSleepEff {
+                                                            MetricTile(
+                                                                title: "Sleep Eff", subtitle: "Overnight",
+                                                                value: "\(Int(eff * 100))%", unit: "",
+                                                                systemImage: "bed.double.fill",
+                                                                sparkValues: recoverySparklines.eff,
+                                                                delta: readiness.effDelta.map { $0 * 100 },
+                                                                deltaUnit: "%",
+                                                                higherIsBetter: true
+                                                            )
+                                                        }
+                                                        if latestSpO2 != nil {
+                                                            MetricTile(
+                                                                title: "SpO2", subtitle: "Sleep avg",
+                                                                value: fmt1(latestSpO2), unit: "%",
+                                                                systemImage: "drop.fill"
+                                                            )
+                                                        }
                         }
                     }
 
@@ -873,6 +935,10 @@ fileprivate struct MetricTile: View {
     let unit: String
     let systemImage: String
     var isDateTime: Bool = false
+    var sparkValues: [Double]? = nil
+    var delta: Double? = nil
+    var deltaUnit: String = ""
+    var higherIsBetter: Bool = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -894,6 +960,12 @@ fileprivate struct MetricTile: View {
                 }
 
                 Spacer()
+
+                if let vals = sparkValues, vals.count >= 3 {
+                    Sparkline(values: vals.map { Optional($0) })
+                        .frame(width: 44, height: 18)
+                        .opacity(0.5)
+                }
             }
 
             HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -908,6 +980,19 @@ fileprivate struct MetricTile: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+            }
+
+            if let d = delta {
+                let noise = abs(d) < 0.3
+                let favorable = higherIsBetter ? d > 0 : d < 0
+                let color: Color = noise
+                    ? Color.secondary.opacity(0.6)
+                    : favorable ? Color.green.opacity(0.8) : Color.orange.opacity(0.9)
+                let sign = d > 0 ? "+" : ""
+                let numStr = String(format: abs(d) < 10 ? "%.1f" : "%.0f", d)
+                Text("\(sign)\(numStr) \(deltaUnit) vs avg")
+                    .font(.caption2.weight(.medium))
+                    .foregroundColor(color)
             }
         }
         .padding(12)
