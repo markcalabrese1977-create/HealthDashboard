@@ -148,9 +148,24 @@ enum ReadinessStatus: String, Codable {
     }
 }
 
+enum ReadinessConfidence: String, Codable, Equatable {
+    case low
+    case medium
+    case high
+
+    var title: String {
+        switch self {
+        case .low: return "Low confidence"
+        case .medium: return "Medium confidence"
+        case .high: return "High confidence"
+        }
+    }
+}
+
 struct ReadinessResult: Equatable {
     var truth: ReadinessStatus          // metrics truth color
     var action: ReadinessStatus         // what we recommend doing today (may be softened)
+    var confidence: ReadinessConfidence
     var flags: [String]                 // top drivers
     var actionTitle: String
     var actionMessage: String

@@ -395,19 +395,47 @@ enum ReadinessEngine {
                             return cur - base
                         }()
 
-                        return ReadinessResult(
-                            truth: truth,
-                            action: action,
-                            flags: Array(uniqueFlags),
-                            actionTitle: actionTitle,
-                            actionMessage: actionMessage,
-                            canPushKeyLift: canPushKeyLift,
-                            rhrDelta: rhrDeltaAbs,
-                            hrvDelta: hrvDeltaMS,
-                            sleepDelta: sleepDeltaAbs,
-                            tempDelta: tempDeltaAbs,
-                            rrDelta: rrDeltaAbs,
-                            effDelta: effDeltaForResult
-                        )
+        let availableCoreSignals = [
+            today?.restingHR != nil,
+            today?.hrvMS != nil,
+            today?.sleepHours != nil,
+            today?.respiratoryRate != nil,
+            today?.wristTempDeltaC != nil,
+            today?.spo2Pct != nil
+        ].filter { $0 }.count
+
+        let availableHighTrustSignals = [
+            today?.restingHR != nil,
+            today?.sleepHours != nil,
+            today?.respiratoryRate != nil
+        ].filter { $0 }.count
+
+        let confidence: ReadinessConfidence = {
+            if availableHighTrustSignals >= 3 && availableCoreSignals >= 5 {
+                return .high
+            }
+
+            if availableHighTrustSignals >= 2 && availableCoreSignals >= 3 {
+                return .medium
+            }
+
+            return .low
+        }()
+        
+        return ReadinessResult(
+            truth: truth,
+            action: action,
+            confidence: confidence,
+            flags: Array(uniqueFlags),
+            actionTitle: actionTitle,
+            actionMessage: actionMessage,
+            canPushKeyLift: canPushKeyLift,
+            rhrDelta: rhrDeltaAbs,
+            hrvDelta: hrvDeltaMS,
+            sleepDelta: sleepDeltaAbs,
+            tempDelta: tempDeltaAbs,
+            rrDelta: rrDeltaAbs,
+            effDelta: effDeltaForResult
+        )
     }
 }

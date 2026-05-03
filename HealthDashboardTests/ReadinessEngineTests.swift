@@ -245,6 +245,47 @@ final class ReadinessEngineTests: XCTestCase {
 
         XCTAssertNotEqual(result.truth, .red)
     }
-    
+    func testCompleteDataProducesHighConfidence() {
+        let result = ReadinessEngine.evaluate(
+            history: history(today: point(day: 28)),
+            manual: .default
+        )
+
+        XCTAssertEqual(result.confidence, .high)
+    }
+
+    func testPartialDataProducesMediumConfidence() {
+        let today = point(
+            day: 28,
+            hrv: nil,
+            temp: nil,
+            spo2: nil
+        )
+
+        let result = ReadinessEngine.evaluate(
+            history: history(today: today),
+            manual: .default
+        )
+
+        XCTAssertEqual(result.confidence, .medium)
+    }
+
+    func testSparseDataProducesLowConfidence() {
+        let today = point(
+            day: 28,
+            rhr: nil,
+            hrv: nil,
+            rr: nil,
+            temp: nil,
+            spo2: nil
+        )
+
+        let result = ReadinessEngine.evaluate(
+            history: history(today: today),
+            manual: .default
+        )
+
+        XCTAssertEqual(result.confidence, .low)
+    }
     
 }
