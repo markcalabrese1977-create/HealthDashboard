@@ -13,6 +13,13 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		D51283E82FA7D136008B6A7D /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = D55406A52F219C1400967963 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D55406AC2F219C1400967963;
+			remoteInfo = HealthDashboard;
+		};
 		D55406D32F219CD000967963 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = D55406A52F219C1400967963 /* Project object */;
@@ -37,6 +44,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		D51283E42FA7D136008B6A7D /* HealthDashboardTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HealthDashboardTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D55406AD2F219C1400967963 /* HealthDashboard.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HealthDashboard.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D55406C12F219CCF00967963 /* HealthDashboardWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = HealthDashboardWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		D55406C32F219CCF00967963 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
@@ -68,6 +76,11 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		D51283E52FA7D136008B6A7D /* HealthDashboardTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = HealthDashboardTests;
+			sourceTree = "<group>";
+		};
 		D55406AF2F219C1400967963 /* HealthDashboard */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -87,6 +100,13 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		D51283E12FA7D136008B6A7D /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		D55406AA2F219C1400967963 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -112,6 +132,7 @@
 				D55406DC2F219D8A00967963 /* HealthDashboardWidgetExtension.entitlements */,
 				D55406AF2F219C1400967963 /* HealthDashboard */,
 				D55406C72F219CCF00967963 /* HealthDashboardWidget */,
+				D51283E52FA7D136008B6A7D /* HealthDashboardTests */,
 				D55406C22F219CCF00967963 /* Frameworks */,
 				D55406AE2F219C1400967963 /* Products */,
 			);
@@ -122,6 +143,7 @@
 			children = (
 				D55406AD2F219C1400967963 /* HealthDashboard.app */,
 				D55406C12F219CCF00967963 /* HealthDashboardWidgetExtension.appex */,
+				D51283E42FA7D136008B6A7D /* HealthDashboardTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -138,6 +160,29 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		D51283E32FA7D136008B6A7D /* HealthDashboardTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D51283EC2FA7D136008B6A7D /* Build configuration list for PBXNativeTarget "HealthDashboardTests" */;
+			buildPhases = (
+				D51283E02FA7D136008B6A7D /* Sources */,
+				D51283E12FA7D136008B6A7D /* Frameworks */,
+				D51283E22FA7D136008B6A7D /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				D51283E92FA7D136008B6A7D /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				D51283E52FA7D136008B6A7D /* HealthDashboardTests */,
+			);
+			name = HealthDashboardTests;
+			packageProductDependencies = (
+			);
+			productName = HealthDashboardTests;
+			productReference = D51283E42FA7D136008B6A7D /* HealthDashboardTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		D55406AC2F219C1400967963 /* HealthDashboard */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = D55406BA2F219C1500967963 /* Build configuration list for PBXNativeTarget "HealthDashboard" */;
@@ -191,9 +236,13 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 2620;
+				LastSwiftUpdateCheck = 2640;
 				LastUpgradeCheck = 2620;
 				TargetAttributes = {
+					D51283E32FA7D136008B6A7D = {
+						CreatedOnToolsVersion = 26.4;
+						TestTargetID = D55406AC2F219C1400967963;
+					};
 					D55406AC2F219C1400967963 = {
 						CreatedOnToolsVersion = 26.2;
 					};
@@ -218,11 +267,19 @@
 			targets = (
 				D55406AC2F219C1400967963 /* HealthDashboard */,
 				D55406C02F219CCF00967963 /* HealthDashboardWidgetExtension */,
+				D51283E32FA7D136008B6A7D /* HealthDashboardTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		D51283E22FA7D136008B6A7D /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		D55406AB2F219C1400967963 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -240,6 +297,13 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		D51283E02FA7D136008B6A7D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		D55406A92F219C1400967963 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -257,6 +321,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		D51283E92FA7D136008B6A7D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D55406AC2F219C1400967963 /* HealthDashboard */;
+			targetProxy = D51283E82FA7D136008B6A7D /* PBXContainerItemProxy */;
+		};
 		D55406D42F219CD000967963 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = D55406C02F219CCF00967963 /* HealthDashboardWidgetExtension */;
@@ -265,6 +334,53 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		D51283EA2FA7D136008B6A7D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4QU96N83NX;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.4;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.calabrese.HealthDashboardTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/HealthDashboard.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/HealthDashboard";
+			};
+			name = Debug;
+		};
+		D51283EB2FA7D136008B6A7D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4QU96N83NX;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.4;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.calabrese.HealthDashboardTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/HealthDashboard.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/HealthDashboard";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
 		D55406B82F219C1500967963 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -545,6 +661,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		D51283EC2FA7D136008B6A7D /* Build configuration list for PBXNativeTarget "HealthDashboardTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D51283EA2FA7D136008B6A7D /* Debug */,
+				D51283EB2FA7D136008B6A7D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		D55406A82F219C1400967963 /* Build configuration list for PBXProject "HealthDashboard" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
