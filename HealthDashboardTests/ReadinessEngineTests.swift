@@ -213,7 +213,7 @@ final class ReadinessEngineTests: XCTestCase {
         XCTAssertNotEqual(result.truth, .red)
     }
     
-    func testHRVDropOverSeveralDaysTriggersYellow() {
+    func testHRVDropOverSeveralDaysAloneDoesNotForceYellow() {
         var hist = (1...24).map { point(day: $0, hrv: 30) }
 
         hist += [
@@ -228,7 +228,8 @@ final class ReadinessEngineTests: XCTestCase {
             manual: .default
         )
 
-        XCTAssertEqual(result.truth, .yellow)
+        XCTAssertEqual(result.truth, .green)
+        XCTAssertEqual(result.driverSummary, "HRV ↓")
     }
     
     func testGoodSleepOffsetsMinorHRVDrop() {
@@ -286,6 +287,50 @@ final class ReadinessEngineTests: XCTestCase {
         )
 
         XCTAssertEqual(result.confidence, .low)
+    }
+    
+    func testDriversArePopulatedAndSorted() {
+        let today = point(
+            day: 28,
+            rhr: 72,
+            hrv: 22,
+            sleep: 5.5
+        )
+
+        let result = ReadinessEngine.evaluate(
+            history: history(today: today),
+            manual: .default
+        )
+
+        XCTAssertFalse(result.drivers.isEmpty)
+
+        if result.drivers.count >= 2 {
+            XCTAssertGreaterThanOrEqual(
+                result.drivers[0].impact,
+                result.drivers[1].impact
+            )
+        }
+    }
+    
+    func testHRVAloneAtNegativeThreeDoesNotForceYellowWhenOtherSignalsAreGood() {
+        let today = point(
+            day: 28,
+            rhr: 66,
+            hrv: 18.8,
+            sleep: 9.7,
+            inBed: 9.9,
+            rr: 18.8,
+            temp: 36.0
+        )
+
+        let result = ReadinessEngine.evaluate(
+            history: history(today: today),
+            manual: ManualReadinessInputs(painLevel: 1, isSick: false)
+        )
+
+        XCTAssertNotEqual(result.truth, .red)
+        XCTAssertNotEqual(result.action, .red)
+        //XCTAssertTrue(result.driverSummary.contains("HRV"))
     }
     
 }

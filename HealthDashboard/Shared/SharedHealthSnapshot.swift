@@ -162,11 +162,18 @@ enum ReadinessConfidence: String, Codable, Equatable {
     }
 }
 
+struct ReadinessDriver: Equatable {
+    let label: String
+    let impact: Int
+    let isNegative: Bool
+}
+
 struct ReadinessResult: Equatable {
     var truth: ReadinessStatus          // metrics truth color
     var action: ReadinessStatus         // what we recommend doing today (may be softened)
     var confidence: ReadinessConfidence
     var flags: [String]                 // top drivers
+    var drivers: [ReadinessDriver]
     var actionTitle: String
     var actionMessage: String
     var canPushKeyLift: Bool            // general "push permission"
@@ -177,7 +184,18 @@ struct ReadinessResult: Equatable {
     var rrDelta: Double?                // today - baseline br/min
     var effDelta: Double?               // today - baseline efficiency (0–1 scale)
 }
+extension ReadinessResult {
+    var driverSummary: String {
+        guard !drivers.isEmpty else { return "No major drivers" }
 
+        return drivers
+            .map {
+                let arrow = $0.isNegative ? "↑" : "↓"
+                return "\($0.label) \(arrow)"
+            }
+            .joined(separator: ", ")
+    }
+}
 // MARK: - App Group Store + Debug Hooks
 
 enum SharedStore {

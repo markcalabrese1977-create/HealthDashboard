@@ -306,9 +306,15 @@ struct ContentView: View {
                         VStack(alignment: .leading, spacing: 10) {
 
                             HStack(alignment: .firstTextBaseline) {
-                                Text(readiness.truth.guidance)
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(readiness.truth.guidance)
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+
+                                    Text(readiness.confidence.title)
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.secondary)
+                                }
 
                                 Spacer()
 
@@ -317,16 +323,9 @@ struct ContentView: View {
                                     .foregroundStyle(.secondary)
                             }
 
-                            if readiness.flags.isEmpty {
-                                Text("Drivers: none")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            } else {
-                                let top = Array(readiness.flags.prefix(3))
-                                Text("Drivers: " + top.joined(separator: ", "))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
+                            Text("Driven by: \(readiness.driverSummary)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
 
                             Button { showActionDialog = true } label: {
                                 let iconName: String = {
@@ -355,7 +354,6 @@ struct ContentView: View {
                                 Text(readiness.actionMessage)
                             }
 
-                            // Manual inputs (MINIMAL): Pain + Sick
                             DisclosureGroup {
                                 VStack(alignment: .leading, spacing: 12) {
                                     Text("Only use this when wearables miss the obvious.")
@@ -369,10 +367,14 @@ struct ContentView: View {
                                             Text("\(manual.painLevel)/10")
                                                 .foregroundStyle(.secondary)
                                         }
+
                                         Slider(
                                             value: Binding(
                                                 get: { Double(manual.painLevel) },
-                                                set: { manual.painLevel = Int($0.rounded()); persistManual() }
+                                                set: {
+                                                    manual.painLevel = Int($0.rounded())
+                                                    persistManual()
+                                                }
                                             ),
                                             in: 0...10,
                                             step: 1
@@ -381,7 +383,10 @@ struct ContentView: View {
 
                                     Toggle("Sick (systemic)", isOn: Binding(
                                         get: { manual.isSick },
-                                        set: { manual.isSick = $0; persistManual() }
+                                        set: {
+                                            manual.isSick = $0
+                                            persistManual()
+                                        }
                                     ))
 
                                     Text("Turn on only if you’re clearly sick (feverish, body aches, chest crud, heavy fatigue).")

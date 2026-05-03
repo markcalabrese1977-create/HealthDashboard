@@ -289,8 +289,8 @@ enum ReadinessEngine {
         let total = recoveryScore + loadMod
 
         // Keep your preference: do not Yellow from one moderate negative.
-        let yellowTotalCutoff = -3
-        let redTotalCutoff = -6
+        let yellowTotalCutoff = -4
+        let redTotalCutoff = -7 
 
         var truth: ReadinessStatus
         if total <= redTotalCutoff {
@@ -422,11 +422,42 @@ enum ReadinessEngine {
             return .low
         }()
         
+        var drivers: [ReadinessDriver] = []
+
+        func addDriver(_ label: String, _ score: Int) {
+            guard score != 0 else { return }
+
+            let isNegative = score > 0
+
+            drivers.append(
+                ReadinessDriver(
+                    label: label,
+                    impact: abs(score),
+                    isNegative: isNegative
+                )
+            )
+        }
+
+        addDriver("HRV", hrvScore)
+        addDriver("RHR", rhrScore)
+        addDriver("Sleep", sleepScore)
+        addDriver("Sleep Quality", sleepEffScore)
+        addDriver("Respiratory Rate", rrScore)
+        addDriver("Wrist Temp", tempScore)
+        addDriver("SpO2", spo2Score)
+        addDriver("Pain", painScore)
+        addDriver("Sick", sickScore)
+
+        let topDrivers = drivers
+            .sorted { $0.impact > $1.impact }
+            .prefix(3)
+        
         return ReadinessResult(
             truth: truth,
             action: action,
             confidence: confidence,
             flags: Array(uniqueFlags),
+            drivers: Array(topDrivers),
             actionTitle: actionTitle,
             actionMessage: actionMessage,
             canPushKeyLift: canPushKeyLift,
