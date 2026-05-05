@@ -270,9 +270,9 @@ final class HealthKitManager {
             let inBedVal = sleepDictResolved[dayISO]?.inBedHours
 
             let w = workoutSummary[dayISO]
-            let wCount = w?.count
-            let wMinutes = w?.minutes
-            let wEnergy = w?.energyKcal
+            let wCount = w?.count ?? 0
+            let wMinutes = w?.minutes ?? 0
+            let wEnergy = w?.energyKcal ?? 0
 
             let weightLb = weightDict[dayISO]
             let bodyFatPctVal = normalizePercent(bodyFatRaw[dayISO])
@@ -702,7 +702,11 @@ final class HealthKitManager {
         var interval = DateComponents()
         interval.day = 1
 
-        let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictStartDate)
+        let predicate = HKQuery.predicateForSamples(
+            withStart: start,
+            end: end,
+            options: []
+        )
 
         return try await withCheckedThrowingContinuation { cont in
             let query = HKStatisticsCollectionQuery(
@@ -723,18 +727,9 @@ final class HealthKitManager {
                 results?.enumerateStatistics(from: start, to: end) { stats, _ in
                     let dayISO = Self.isoDayString(stats.startDate)
 
-                    #if DEBUG
-                    if identifier == .restingHeartRate {
-                        if let avg = stats.averageQuantity()?.doubleValue(for: unit) {
-                            print("🩺 RHR avg \(dayISO) = \(String(format: "%.2f", avg))")
-                        } else {
-                            print("🩺 RHR avg \(dayISO) = nil (no samples in bucket)")
-                        }
-                    }
-                    #endif
 
-                    if let avg = stats.averageQuantity()?.doubleValue(for: unit) {
-                        out[dayISO] = avg
+                    if let sum = stats.sumQuantity()?.doubleValue(for: unit) {
+                        out[dayISO] = sum
                     }
                 }
 
@@ -745,7 +740,7 @@ final class HealthKitManager {
         }
     }
 
-    // MARK: - Workouts (calendar-day bucket)
+    // MARK: - Workouts (local calendar-day bucket)
 
     private struct WorkoutDaySummary {
         var count: Double
@@ -754,8 +749,18 @@ final class HealthKitManager {
     }
 
     private func fetchDailyWorkouts(start: Date, end: Date) async throws -> [String: WorkoutDaySummary] {
-        let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictStartDate)
-        let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
+        let cal = Calendar.current
+
+        let predicate = HKQuery.predicateForSamples(
+            withStart: start,
+            end: end,
+            options: .strictStartDate
+        )
+
+        let sort = NSSortDescriptor(
+            key: HKSampleSortIdentifierStartDate,
+            ascending: true
+        )
 
         return try await withCheckedThrowingContinuation { cont in
             let query = HKSampleQuery(
@@ -770,14 +775,40 @@ final class HealthKitManager {
                 }
 
                 let workouts = (samples as? [HKWorkout]) ?? []
+
+                #if DEBUG
+                print("🏋️ Workout raw count=\(workouts.count) range=\(start) → \(end)")
+                for w in workouts {
+                    let localDay = cal.startOfDay(for: w.startDate)
+                    let dayISO = Self.isoDayString(localDay)
+
+                    print("""
+                    🏋️ Workout[\(dayISO)] \
+                    \(w.workoutActivityType) \
+                    \(w.startDate) → \(w.endDate) \
+                    duration=\(String(format: "%.1f", w.duration / 60.0))min \
+                    source=\(w.sourceRevision.source.name) \
+                    bundle=\(w.sourceRevision.source.bundleIdentifier)
+                    """)
+                }
+                #endif
+
                 var out: [String: WorkoutDaySummary] = [:]
 
                 for w in workouts {
-                    let dayISO = Self.isoDayString(w.startDate)
-                    var cur = out[dayISO] ?? WorkoutDaySummary(count: 0, minutes: 0, energyKcal: 0)
+                    // Workouts belong to the local calendar day they STARTED on.
+                    // This is intentionally separate from sleep/readiness, which uses wake-day/noon→noon logic.
+                    let localDay = cal.startOfDay(for: w.startDate)
+                    let dayISO = Self.isoDayString(localDay)
+
+                    var cur = out[dayISO] ?? WorkoutDaySummary(
+                        count: 0,
+                        minutes: 0,
+                        energyKcal: 0
+                    )
 
                     cur.count += 1
-                    cur.minutes += (w.duration / 60.0)
+                    cur.minutes += w.duration / 60.0
 
                     if let e = w.totalEnergyBurned?.doubleValue(for: .kilocalorie()) {
                         cur.energyKcal += e
@@ -785,6 +816,19 @@ final class HealthKitManager {
 
                     out[dayISO] = cur
                 }
+
+                #if DEBUG
+                for key in out.keys.sorted() {
+                    if let s = out[key] {
+                        print("""
+                        🏋️ WorkoutSummary[\(key)] \
+                        count=\(Int(s.count)) \
+                        minutes=\(String(format: "%.1f", s.minutes)) \
+                        kcal=\(String(format: "%.0f", s.energyKcal))
+                        """)
+                    }
+                }
+                #endif
 
                 cont.resume(returning: out)
             }
