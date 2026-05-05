@@ -91,6 +91,13 @@ struct ContentView: View {
                     }
     private var latestSpO2: Double? { latestNonNil(\.spo2Pct) }
 
+    fileprivate func fmtSignedPlain(_ v: Double?, digits: Int, unit: String) -> String {
+        guard let v else { return "--" }
+
+        let formatted = String(format: "%+.\(digits)f", v)
+        return formatted + (unit.isEmpty ? "" : " \(unit)")
+    }
+    
     private func fmtSigned1(_ v: Double?) -> String {
         guard let v else { return "--" }
         return String(format: "%+.1f", v)
@@ -676,7 +683,7 @@ struct ContentView: View {
                         )
                     ) {
                         VStack(alignment: .leading, spacing: 10) {
-                            Text("7-day window · baseline = median of prior days")
+                            Text("Latest value vs median of prior available days · 7-day window")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
 
@@ -765,6 +772,7 @@ struct ContentView: View {
 
                 // AFTER
                 if let last = points.last {
+                    print("🧪 Backfill last point day=\(last.dayISO) steps=\(last.steps ?? -1) kcal=\(last.activeEnergyKcal ?? -1) exercise=\(last.exerciseMinutes ?? -1) stand=\(last.standHours ?? -1) workouts=\(last.workoutCount ?? -1)")
                     var snap = SharedStore.load()
                     let cal = Calendar.current
                     let snapIsToday = cal.isDateInToday(snap.updatedAt)
@@ -871,23 +879,65 @@ fileprivate func fmtSigned(_ v: Double?, digits: Int, unit: String) -> String {
     return "Δ " + String(format: "%+.\(digits)f", v) + (unit.isEmpty ? "" : " \(unit)")
 }
 
+fileprivate func fmtSignedPlain(_ v: Double?, digits: Int, unit: String) -> String {
+    guard let v else { return "--" }
+
+    let formatted = String(format: "%+.\(digits)f", v)
+    return formatted + (unit.isEmpty ? "" : " \(unit)")
+}
+
 fileprivate struct HDTrendRow: View {
     let summary: TrendSummary
 
+    private var isLatestPointToday: Bool {
+        summary.nowIndex == summary.values.count - 1
+    }
+
     private var nowLabel: String {
         switch summary.title {
-        case "Steps", "Active Energy", "Exercise", "Stand":
-            return "Today so far"
+        case "Steps", "Active Energy", "Exercise", "Stand", "Workouts", "Workout Time", "Workout Energy":
+            return isLatestPointToday ? "Today so far" : "Latest day"
+
+        case "HRV", "Sleep", "Wrist Temp Δ", "Resp Rate", "SpO2":
+            return "Latest overnight"
+
+        case "Weight":
+            return "Latest weigh-in"
+
+        case "Body Fat", "Lean Mass":
+            return "Latest reading"
+
+        case "Resting HR":
+            return "Latest"
+
         default:
-            return "Now"
+            return "Latest"
         }
     }
 
     private var digits: Int {
-        switch summary.unit {
-        case "bpm", "ms": return 0
-        default: return 1
+        switch summary.title {
+        case "Steps", "Active Energy", "Exercise", "Stand", "Workouts", "Workout Time", "Workout Energy":
+            return 0
+        case "Resting HR", "HRV":
+            return 0
+        default:
+            return 1
         }
+    }
+    
+    fileprivate func fmtTrendValue(_ v: Double?, digits: Int, unit: String, title: String) -> String {
+        guard let v else { return "--" }
+
+        if title == "Steps" {
+            let nf = NumberFormatter()
+            nf.numberStyle = .decimal
+            nf.maximumFractionDigits = 0
+            return nf.string(from: NSNumber(value: v)) ?? "\(Int(v.rounded()))"
+        }
+
+        let value = String(format: "%.\(digits)f", v)
+        return value + (unit.isEmpty ? "" : " \(unit)")
     }
 
     private var deltaColor: Color {
@@ -909,62 +959,83 @@ fileprivate struct HDTrendRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Image(systemName: summary.systemImage)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 8) {
+                Image(systemName: summary.systemImage)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
 
-                    Text(summary.title)
-                        .font(.subheadline.weight(.semibold))
+                Text(summary.title)
+                    .font(.subheadline.weight(.semibold))
 
-                    Spacer()
-                }
+                Spacer()
 
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(nowLabel)
+                HDTrendSparkline(values: summary.values)
+                    .frame(width: 72, height: 28)
+                    .opacity(0.85)
+            }
+
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(nowLabel)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Text(fmtTrendValue(summary.nowValue, digits: digits, unit: summary.unit, title: summary.title))
+                    .font(.title3.weight(.bold))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+
+                Spacer()
+
+                if let idx = summary.nowIndex, idx != summary.values.count - 1 {
+                    Text("As of \(fmtDay(summary.nowDayISO))")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-
-                    Text(fmt(summary.nowValue, digits: digits, unit: summary.unit))
-                        .font(.title3.weight(.bold))
-                        .monospacedDigit()
-
-                    Spacer()
-
-                    if let idx = summary.nowIndex, idx != summary.values.count - 1 {
-                        Text("As of \(fmtDay(summary.nowDayISO))")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                HStack(spacing: 12) {
-                    Text("Avg \(fmt(summary.avg, digits: digits, unit: summary.unit))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-
-                    Text(fmtSigned(summary.deltaVsBaseline, digits: digits, unit: summary.unit))
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(deltaColor)
-                        .monospacedDigit()
-
-                    if let lo = summary.min, let hi = summary.max {
-                        Text("Range \(String(format: "%.\(digits)f", lo))–\(String(format: "%.\(digits)f", hi))")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                    }
-
-                    Spacer()
+                        .multilineTextAlignment(.trailing)
                 }
             }
 
-            HDTrendSparkline(values: summary.values)
-                .frame(width: 92, height: 34)
-                .opacity(0.9)
+            HStack(alignment: .top, spacing: 14) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("7d avg")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+
+                    Text(fmtTrendValue(summary.avg, digits: digits, unit: summary.unit, title: summary.title))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Vs median")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+
+                    Text(fmtSignedPlain(summary.deltaVsBaseline, digits: digits, unit: summary.unit))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(deltaColor)
+                        .monospacedDigit()
+                }
+
+                if let lo = summary.min, let hi = summary.max {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Range")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+
+                        Text("\(fmtTrendValue(lo, digits: digits, unit: "", title: summary.title))–\(fmtTrendValue(hi, digits: digits, unit: summary.unit, title: summary.title))")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                    }
+                }
+
+                Spacer(minLength: 0)
+            }
         }
         .padding(14)
         .background(
