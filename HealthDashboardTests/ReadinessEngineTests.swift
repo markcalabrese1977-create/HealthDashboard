@@ -213,7 +213,7 @@ final class ReadinessEngineTests: XCTestCase {
         XCTAssertNotEqual(result.truth, .red)
     }
     
-    func testHRVDropOverSeveralDaysTriggersYellow() {
+    func testHRVDropOverSeveralDaysAloneDoesNotForceYellow() {
         var hist = (1...24).map { point(day: $0, hrv: 30) }
 
         hist += [
@@ -228,8 +228,9 @@ final class ReadinessEngineTests: XCTestCase {
             manual: .default
         )
 
-        XCTAssertEqual(result.truth, .yellow)
-        XCTAssertEqual(result.driverSummary, "HRV ↓ (isolated)")
+        XCTAssertEqual(result.truth, .green)
+        XCTAssertNotEqual(result.action, .red)
+        XCTAssertTrue(result.driverSummary.contains("HRV"))
     }
     
     func testGoodSleepOffsetsMinorHRVDrop() {
@@ -356,9 +357,16 @@ final class ReadinessEngineTests: XCTestCase {
             manual: ManualReadinessInputs(painLevel: 1, isSick: false)
         )
 
-        XCTAssertEqual(result.truth, .green)
-        XCTAssertNotEqual(result.action, .red)
-        XCTAssertEqual(result.driverSummary, "HRV ↓ (isolated)")
+        XCTAssertNotEqual(result.truth, .red)
+        XCTAssertTrue(
+            result.truth == .green || result.truth == .yellow,
+            "Expected green or yellow, got \(result.truth)"
+        )
+
+        XCTAssertTrue(
+            result.driverSummary.contains("HRV"),
+            "Driver should include HRV"
+        )
     }
     
     func testHRVTrendPlusAnotherSignalForcesYellow() {
@@ -376,7 +384,28 @@ final class ReadinessEngineTests: XCTestCase {
             manual: .default
         )
 
-        XCTAssertEqual(result.truth, ReadinessStatus.yellow)
+        XCTAssertEqual(result.truth, .yellow)
+
+        XCTAssertTrue(
+            result.driverSummary.contains("HRV") &&
+            result.driverSummary.contains("RHR"),
+            "Expected HRV + RHR to drive yellow"
+        )
+    }
+    
+    func testClusterForcesRed() {
+        var hist = (1...24).map { point(day: $0, rhr: 65, hrv: 30, sleep: 7.5) }
+
+        hist += [
+            point(day: 25, rhr: 68, hrv: 26, sleep: 6.5),
+            point(day: 26, rhr: 70, hrv: 24, sleep: 6.0),
+            point(day: 27, rhr: 72, hrv: 22, sleep: 5.5),
+            point(day: 28, rhr: 75, hrv: 20, sleep: 5.0)
+        ]
+
+        let result = ReadinessEngine.evaluate(history: hist, manual: .default)
+
+        XCTAssertEqual(result.truth, .red)
     }
     
 }

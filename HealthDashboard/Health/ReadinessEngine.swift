@@ -327,10 +327,10 @@ enum ReadinessEngine {
 
         let sickFlag = manual.isSick
 
-        // Cluster now includes: HRV down, RHR up, short sleep, temp up, RR up, sleep quality down, sick
+        let hrvConcern = hrvDown10 || hrvDownTrend
+
         let clusterCount = [
-            hrvDown10,
-            hrvDownTrend,
+            hrvConcern,
             rhrUp4,
             sleepShort1,
             tempUp03,
@@ -437,7 +437,7 @@ enum ReadinessEngine {
         print("  Base:    HRV=\(fmt(hrvBase)) RHR=\(fmt(rhrBase)) SleepBase=\(fmt(sleepBase)) SleepTarget=\(String(format: "%.2f", sleepTarget)) EffBase=\(fmt(effBase)) RRBase=\(fmt(rrBase)) TempBase=\(fmt(tempBase)) SpO2=\(fmt(spo2Base))")
         print("  Δ:       HRV=\(fmtPct(hrvDeltaPct)) RHR=\(fmt(rhrDeltaAbs)) Sleep=\(fmt(sleepDeltaAbs)) Eff=\(fmt(effDeltaAbs)) RR=\(fmt(rrDeltaAbs)) Temp=\(fmt(tempDeltaAbs)) SpO2=\(fmt(spo2DeltaAbs))")
         print("  Scores:  HRV(raw)=\(hrvScore) HRV(adj)=\(adjustedHRVScore) buffered=\(hrvBufferedByStrongRecovery) RHR=\(rhrScore) Sleep=\(sleepScore) Eff=\(sleepEffScore) RR=\(rrScore) Temp=\(tempScore) SpO2=\(spo2Score) pain=\(painScore) sick=\(sickScore) recovery=\(recoveryScore) load=\(loadMod) total=\(total)")
-        print("  Cluster: hrvDown10=\(hrvDown10) hrvTrend=\(hrvDownTrend) rhrUp4=\(rhrUp4) sleepShort1=\(sleepShort1) sleepEffLow=\(sleepEffLow) rrUp10=\(rrUp10) tempUp03=\(tempUp03) sick=\(sickFlag) count=\(clusterCount) forceY=\(forceYellow) forceR=\(forceRed)")
+        print("  Cluster: hrvDown10=\(hrvDown10) hrvTrend=\(hrvDownTrend) hrvConcern=\(hrvConcern) rhrUp4=\(rhrUp4) sleepShort1=\(sleepShort1) sleepEffLow=\(sleepEffLow) rrUp10=\(rrUp10) tempUp03=\(tempUp03) sick=\(sickFlag) count=\(clusterCount) forceY=\(forceYellow) forceR=\(forceRed)")
         print("  Output:  truth=\(truth.title) action=\(action.title) canPush=\(canPushKeyLift)")
         #endif
 

@@ -67,6 +67,7 @@
 				Shared/BodyMeasurementsUI.swift,
 				Shared/DashboardCard.swift,
 				Shared/DXAUI.swift,
+				Shared/ReadinessPresentation.swift,
 				Shared/SharedHealthSnapshot.swift,
 				Shared/Sparkline.swift,
 				Shared/TrendUI.swift,
