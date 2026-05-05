@@ -92,37 +92,37 @@ extension ReadinessResult {
         case .sick:
             headline = "Reduce cost today"
             subline = "Sickness is active"
-            baseExplanation = "Your body is actively fighting something. Training should support recovery, not compete with it."
+            baseExplanation = "Your body is actively fighting something. Training should support recovery, not compete with it. Skip hard training."
             guidanceButtonTitle = "View recovery guidance"
 
         case .highPain:
             headline = "Reduce cost today"
             subline = "Pain is high"
-            baseExplanation = "Pain is high enough to override normal readiness. Reduce load, range, or volume."
+            baseExplanation = "Pain is high enough to override normal readiness. Reduce load, range, or volume. Do not train through worsening symptoms."
             guidanceButtonTitle = "View training guidance"
 
         case .red:
             headline = "Reduce cost today"
             subline = "Recovery is compromised"
-            baseExplanation = "Multiple recovery systems are under strain. This is a cost-control day, not a performance day."
+            baseExplanation = "Multiple recovery systems are under strain. Use the lowest-cost version of training today, or take a recovery day."
             guidanceButtonTitle = "View recovery guidance"
 
         case .yellowCluster:
             headline = "Train with guardrails"
-            subline = "Multiple signals are off"
-            baseExplanation = "Several recovery signals are below baseline. Keep the session productive, but avoid grinders, intensifiers, and extra volume."
+            subline = "Reduce effort today"
+            baseExplanation = "Several recovery signals are below baseline. Run a controlled session: no grinders, no intensifiers, no extra volume."
             guidanceButtonTitle = "View training guidance"
 
         case .yellowIsolated:
             headline = "Train with guardrails"
-            subline = "One signal is off"
+            subline = "Do not push today"
             baseExplanation = isolatedYellowExplanation(negativeDrivers: negativeDrivers)
             guidanceButtonTitle = "View training guidance"
 
         case .greenPush:
             headline = "Train normally"
             subline = "Push allowed today"
-            baseExplanation = "Recovery signals are aligned. You can push one key lift if execution stays clean."
+            baseExplanation = "Recovery signals are aligned. Run the plan as written. You may push one key lift if execution stays clean."
             guidanceButtonTitle = "View training guidance"
 
         case .greenNoPush:

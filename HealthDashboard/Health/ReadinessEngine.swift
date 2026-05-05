@@ -392,7 +392,9 @@ enum ReadinessEngine {
                 : "Run plan as written. Keep it clean—no extra cost or hero sets today."
         case .yellow:
             actionTitle = "Train with guardrails"
-            actionMessage = "Run plan with guardrails: no intensifiers, cap effort (stay ~2 RIR), and treat accessories as optional."
+            actionMessage = """
+            Run the plan, but avoid top-end effort. Stay honest with RIR and skip any push or intensifier work. If something feels off early, adjust instead of forcing it.
+            """
         case .red:
             actionTitle = "Reduce cost today"
             actionMessage = "Reduce: choose the lowest-cost version of training (lighter loads and/or fewer sets). No intensifiers, no grinders."
