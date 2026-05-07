@@ -32,22 +32,40 @@ extension ReadinessResult {
         }
     }
 
-    private var presentationDriverSummary: String {
-        guard !drivers.isEmpty else {
-            return "No meaningful deviations"
-        }
-
+    private func presentationDriverSummary(for messageState: ReadinessMessageState) -> String {
         let negatives = drivers.filter { $0.isNegative }
 
-        if negatives.count == 1, let driver = negatives.first {
-            return "\(driverDisplay(driver)) (isolated)"
-        }
+        switch messageState {
+        case .greenPush:
+            return "Recovery aligned"
 
-        if !negatives.isEmpty {
-            return negatives.map { driverDisplay($0) }.joined(separator: ", ")
-        }
+        case .greenNoPush:
+            if negatives.isEmpty {
+                return "Stable, not elevated"
+            }
 
-        return drivers.map { driverDisplay($0) }.joined(separator: ", ")
+            // Green should not read like a warning state.
+            // These are watch items, not the reason for readiness.
+            return "Minor watch item: \(negatives.prefix(2).map { driverDisplay($0) }.joined(separator: ", "))"
+
+        case .yellowIsolated:
+            if let driver = negatives.first {
+                return "\(driverDisplay(driver)) (isolated)"
+            }
+            return "One recovery signal off"
+
+        case .yellowCluster:
+            if !negatives.isEmpty {
+                return negatives.map { driverDisplay($0) }.joined(separator: ", ")
+            }
+            return "Several recovery signals off"
+
+        case .red, .sick, .highPain:
+            if !negatives.isEmpty {
+                return negatives.map { driverDisplay($0) }.joined(separator: ", ")
+            }
+            return "Recovery compromised"
+        }
     }
 
     func presentation(manual: ManualReadinessInputs) -> ReadinessPresentation {
@@ -57,7 +75,6 @@ extension ReadinessResult {
             .replacingOccurrences(of: " confidence", with: "")
 
         let confidenceLine = "Confidence: \(confidenceLabel)"
-        let driverLine = "Driver: \(presentationDriverSummary)"
 
         let messageState: ReadinessMessageState = {
             if manual.isSick {
@@ -142,6 +159,8 @@ extension ReadinessResult {
                 return " Data is limited or inconsistent today. Lean more on how you actually feel."
             }
         }()
+
+        let driverLine = "Driver: \(presentationDriverSummary(for: messageState))"
 
         return ReadinessPresentation(
             headline: headline,

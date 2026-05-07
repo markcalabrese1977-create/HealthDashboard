@@ -764,6 +764,12 @@ struct ContentView: View {
             try await HealthKitManager.shared.requestAuthorization()
             let points = try await HealthKitManager.shared.fetchLast28Days()
 
+            #if DEBUG
+            if let lastDay = points.last?.dayISO {
+                try? await HealthKitManager.shared.debugDumpSleepSamplesForDay(lastDay)
+            }
+            #endif
+
             await MainActor.run {
                 _ = SharedStore.checkAppGroupAccess(tag: "backfill7Days() pre-save")
 

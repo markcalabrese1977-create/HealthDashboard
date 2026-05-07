@@ -996,6 +996,199 @@ final class HealthKitManager {
         }
     }
 
+#if DEBUG
+func debugDumpSleepSamplesForDay(_ dayISO: String) async throws {
+    guard let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else {
+        print("🛌 DEBUG Sleep: sleepAnalysis type unavailable")
+        return
+    }
+
+    let df = DateFormatter()
+    df.locale = Locale(identifier: "en_US_POSIX")
+    df.dateFormat = "yyyy-MM-dd"
+
+    guard let labelDate = df.date(from: dayISO) else {
+        print("🛌 DEBUG Sleep: invalid dayISO=\(dayISO)")
+        return
+    }
+
+    let cal = Calendar.current
+
+    // For a wake-day label like 2026-05-07:
+    // sleep window is noon previous day -> noon label day.
+    let labelStart = cal.startOfDay(for: labelDate)
+    let labelNoon = cal.date(byAdding: .hour, value: 12, to: labelStart)!
+    let windowStart = cal.date(byAdding: .day, value: -1, to: labelNoon)!
+    let windowEnd = labelNoon
+
+    let predicate = HKQuery.predicateForSamples(
+        withStart: windowStart,
+        end: windowEnd,
+        options: []
+    )
+
+    let sort = NSSortDescriptor(
+        key: HKSampleSortIdentifierStartDate,
+        ascending: true
+    )
+
+    func sleepValueName(_ value: Int) -> String {
+        if #available(iOS 16.0, *) {
+            switch value {
+            case HKCategoryValueSleepAnalysis.inBed.rawValue:
+                return "inBed"
+            case HKCategoryValueSleepAnalysis.awake.rawValue:
+                return "awake"
+            case HKCategoryValueSleepAnalysis.asleepCore.rawValue:
+                return "asleepCore"
+            case HKCategoryValueSleepAnalysis.asleepDeep.rawValue:
+                return "asleepDeep"
+            case HKCategoryValueSleepAnalysis.asleepREM.rawValue:
+                return "asleepREM"
+            case HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue:
+                return "asleepUnspecified"
+            case HKCategoryValueSleepAnalysis.asleep.rawValue:
+                return "asleep_legacy"
+            default:
+                return "unknown_\(value)"
+            }
+        } else {
+            switch value {
+            case HKCategoryValueSleepAnalysis.inBed.rawValue:
+                return "inBed"
+            case HKCategoryValueSleepAnalysis.asleep.rawValue:
+                return "asleep_legacy"
+            default:
+                return "unknown_\(value)"
+            }
+        }
+    }
+
+    func fmtTime(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd HH:mm:ss ZZZZZ"
+        return f.string(from: date)
+    }
+
+    let samples: [HKCategorySample] = try await withCheckedThrowingContinuation { cont in
+        let query = HKSampleQuery(
+            sampleType: sleepType,
+            predicate: predicate,
+            limit: HKObjectQueryNoLimit,
+            sortDescriptors: [sort]
+        ) { _, samples, error in
+            if let error {
+                cont.resume(throwing: error)
+                return
+            }
+
+            cont.resume(returning: (samples as? [HKCategorySample]) ?? [])
+        }
+
+        self.store.execute(query)
+    }
+
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print("🛌 RAW SLEEP DEBUG for wake-day \(dayISO)")
+    print("Window: \(fmtTime(windowStart)) → \(fmtTime(windowEnd))")
+    print("Raw sample count: \(samples.count)")
+
+    var totalsByValue: [String: Double] = [:]
+    var totalsBySource: [String: Double] = [:]
+    var appleOnlyAsleepIntervals: [(Date, Date)] = []
+    var allAsleepIntervals: [(Date, Date)] = []
+    var appleOnlyWindowIntervals: [(Date, Date)] = []
+    var allWindowIntervals: [(Date, Date)] = []
+
+    func isAsleep(_ value: Int) -> Bool {
+        if #available(iOS 16.0, *) {
+            return value == HKCategoryValueSleepAnalysis.asleepCore.rawValue
+                || value == HKCategoryValueSleepAnalysis.asleepDeep.rawValue
+                || value == HKCategoryValueSleepAnalysis.asleepREM.rawValue
+                || value == HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue
+                || value == HKCategoryValueSleepAnalysis.asleep.rawValue
+        } else {
+            return value == HKCategoryValueSleepAnalysis.asleep.rawValue
+        }
+    }
+
+    func isWindow(_ value: Int) -> Bool {
+        if #available(iOS 16.0, *) {
+            return value == HKCategoryValueSleepAnalysis.inBed.rawValue
+                || value == HKCategoryValueSleepAnalysis.awake.rawValue
+                || value == HKCategoryValueSleepAnalysis.asleepCore.rawValue
+                || value == HKCategoryValueSleepAnalysis.asleepDeep.rawValue
+                || value == HKCategoryValueSleepAnalysis.asleepREM.rawValue
+                || value == HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue
+                || value == HKCategoryValueSleepAnalysis.asleep.rawValue
+        } else {
+            return value == HKCategoryValueSleepAnalysis.inBed.rawValue
+                || value == HKCategoryValueSleepAnalysis.asleep.rawValue
+        }
+    }
+
+    for s in samples {
+        let name = sleepValueName(s.value)
+        let minutes = s.endDate.timeIntervalSince(s.startDate) / 60.0
+        let sourceName = s.sourceRevision.source.name
+        let bundle = s.sourceRevision.source.bundleIdentifier
+        let isApple = Self.isAppleSleepSource(s)
+
+        totalsByValue[name, default: 0] += minutes
+        totalsBySource["\(sourceName) | \(bundle)", default: 0] += minutes
+
+        if isAsleep(s.value) {
+            allAsleepIntervals.append((s.startDate, s.endDate))
+            if isApple {
+                appleOnlyAsleepIntervals.append((s.startDate, s.endDate))
+            }
+        }
+
+        if isWindow(s.value) {
+            allWindowIntervals.append((s.startDate, s.endDate))
+            if isApple {
+                appleOnlyWindowIntervals.append((s.startDate, s.endDate))
+            }
+        }
+
+        print("""
+        🛌 sample value=\(name) minutes=\(String(format: "%.1f", minutes)) apple=\(isApple)
+           \(fmtTime(s.startDate)) → \(fmtTime(s.endDate))
+           source=\(sourceName)
+           bundle=\(bundle)
+        """)
+    }
+
+    print("— Totals by value, unmerged raw minutes —")
+    for key in totalsByValue.keys.sorted() {
+        print("🛌 \(key): \(String(format: "%.1f", totalsByValue[key] ?? 0)) min")
+    }
+
+    print("— Totals by source, unmerged raw minutes —")
+    for key in totalsBySource.keys.sorted() {
+        print("🛌 \(key): \(String(format: "%.1f", totalsBySource[key] ?? 0)) min")
+    }
+
+    let mergedAppleAsleep = mergeIntervals(appleOnlyAsleepIntervals)
+    let mergedAllAsleep = mergeIntervals(allAsleepIntervals)
+    let mergedAppleWindow = mergeIntervals(appleOnlyWindowIntervals)
+    let mergedAllWindow = mergeIntervals(allWindowIntervals)
+
+    let appleAsleepHours = mergedAppleAsleep.reduce(0.0) { $0 + $1.1.timeIntervalSince($1.0) } / 3600.0
+    let allAsleepHours = mergedAllAsleep.reduce(0.0) { $0 + $1.1.timeIntervalSince($1.0) } / 3600.0
+    let appleWindowHours = mergedAppleWindow.reduce(0.0) { $0 + $1.1.timeIntervalSince($1.0) } / 3600.0
+    let allWindowHours = mergedAllWindow.reduce(0.0) { $0 + $1.1.timeIntervalSince($1.0) } / 3600.0
+
+    print("— Merged totals —")
+    print("🛌 Apple-only asleep: \(String(format: "%.2f", appleAsleepHours))h")
+    print("🛌 All-source asleep: \(String(format: "%.2f", allAsleepHours))h")
+    print("🛌 Apple-only window: \(String(format: "%.2f", appleWindowHours))h")
+    print("🛌 All-source window: \(String(format: "%.2f", allWindowHours))h")
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+}
+#endif
+    
     // MARK: - Utilities
 
     private func mergeIntervals(_ intervals: [(Date, Date)]) -> [(Date, Date)] {

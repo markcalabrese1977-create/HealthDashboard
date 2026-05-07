@@ -165,9 +165,15 @@ enum ReadinessEngine {
             let d = effCur - base
             // Keep this conservative: we only penalize obvious deterioration.
             // Example baseline 0.92 -> 0.84 is meaningful.
-            if d >= -0.03 { sleepEffScore = 0 }
-            else if d >= -0.07 { sleepEffScore = -1 }
-            else { sleepEffScore = -2 }
+            // Sleep efficiency is useful, but it is noisy.
+            // Treat it as a supporting signal unless the drop is clearly large.
+            if d >= -0.04 {
+                sleepEffScore = 0
+            } else if d >= -0.10 {
+                sleepEffScore = -1
+            } else {
+                sleepEffScore = -2
+            }
 
             if sleepEffScore < 0 { flags.append("Sleep quality ↓") }
         }
@@ -322,7 +328,10 @@ enum ReadinessEngine {
         let sleepEffLow: Bool = {
             guard let effCur = efficiency(asleep: today?.sleepHours, inBed: today?.sleepInBedHours),
                   let base = effBase else { return false }
-            return (effCur - base) <= -0.05
+
+            // Sleep efficiency is noisy. Only treat it as a cluster/push-blocking signal
+            // when the drop is clearly large.
+            return (effCur - base) <= -0.10
         }()
 
         let sickFlag = manual.isSick
