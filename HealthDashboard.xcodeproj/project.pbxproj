@@ -63,7 +63,9 @@
 		D55406E22F219DD800967963 /* Exceptions for "HealthDashboard" folder in "HealthDashboardWidgetExtension" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				Health/MetricDetailView.swift,
 				Health/ReadinessEngine.swift,
+				Health/WeeklySummaryView.swift,
 				Shared/BodyMeasurementsUI.swift,
 				Shared/DashboardCard.swift,
 				Shared/DXAUI.swift,

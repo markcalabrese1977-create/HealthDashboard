@@ -4,11 +4,24 @@ struct DashboardCard<Content: View>: View {
     let title: String
     let trailing: AnyView?
     let content: Content
+    var collapsible: Bool = false
 
-    init(title: String, trailing: AnyView? = nil, @ViewBuilder content: () -> Content) {
+    @AppStorage private var isExpanded: Bool
+
+    init(
+        title: String,
+        trailing: AnyView? = nil,
+        collapsible: Bool = false,
+        @ViewBuilder content: () -> Content
+    ) {
         self.title = title
         self.trailing = trailing
+        self.collapsible = collapsible
         self.content = content()
+        self._isExpanded = AppStorage(
+            wrappedValue: true,
+            "card.expanded.\(title.lowercased().replacingOccurrences(of: " ", with: "."))"
+        )
     }
 
     var body: some View {
@@ -17,10 +30,26 @@ struct DashboardCard<Content: View>: View {
                 Text(title)
                     .font(.title3.bold())
                 Spacer()
-                if let trailing { trailing }
+                if isExpanded, let trailing { trailing }
+                if collapsible {
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.leading, 4)
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                guard collapsible else { return }
+                withAnimation(.easeInOut(duration: 0.22)) {
+                    isExpanded.toggle()
+                }
             }
 
-            content
+            if isExpanded {
+                content
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
         }
         .padding(16)
         .background(
@@ -33,5 +62,6 @@ struct DashboardCard<Content: View>: View {
                 .stroke(Color.primary.opacity(0.06), lineWidth: 1)
         )
         .shadow(color: Color.black.opacity(0.03), radius: 12, x: 0, y: 6)
+        .clipped()
     }
 }
