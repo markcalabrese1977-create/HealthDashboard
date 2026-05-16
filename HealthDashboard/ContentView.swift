@@ -807,8 +807,17 @@ struct ContentView: View {
                     let cal = Calendar.current
                     let snapIsToday = cal.isDateInToday(snap.updatedAt)
 
-                    // RHR is live — always update
-                    if let rhr = last.restingHR { snap.restingHR = Int(rhr.rounded()) }
+                                        // On a new day, zero load values before writing fresh ones
+                                        if !snapIsToday {
+                                            snap.stepsToday = 0
+                                            snap.activeEnergyTodayKcal = 0
+                                            snap.exerciseMinutesToday = 0
+                                            snap.standHoursToday = 0
+                                            snap.workoutCountToday = 0
+                                        }
+
+                                        // RHR is live — always update
+                                        if let rhr = last.restingHR { snap.restingHR = Int(rhr.rounded()) }
 
                     // HRV: lock once written today, but allow correction if value changed
                     let fetchedHRV = last.hrvMS.map { Int($0.rounded()) }

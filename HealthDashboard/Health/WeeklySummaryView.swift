@@ -352,7 +352,7 @@ private struct WeekMetricRow: View {
                 .foregroundStyle(arrowColor)
             }
 
-            Text("vs prior")
+            Text("vs prior week")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }

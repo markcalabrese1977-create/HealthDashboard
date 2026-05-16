@@ -78,8 +78,17 @@ struct HealthDashboardApp: App {
                         let fetchedHRV = last.hrvMS.map { Int($0.rounded()) }
                         let hrvMismatch = fetchedHRV != nil && fetchedHRV != snap.hrv
 
-                        // RHR is always live
-                        if let rhr = last.restingHR { snap.restingHR = Int(rhr.rounded()) }
+                        // On a new day, zero load values before writing fresh ones
+                                                if !snapIsToday {
+                                                    snap.stepsToday = 0
+                                                    snap.activeEnergyTodayKcal = 0
+                                                    snap.exerciseMinutesToday = 0
+                                                    snap.standHoursToday = 0
+                                                    snap.workoutCountToday = 0
+                                                }
+
+                                                // RHR is always live
+                                                if let rhr = last.restingHR { snap.restingHR = Int(rhr.rounded()) }
 
                         // HRV: lock once written today, allow correction if value changed
                         if !snapIsToday || hrvMismatch {
