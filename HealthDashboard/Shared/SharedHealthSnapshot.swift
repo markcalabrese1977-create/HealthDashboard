@@ -46,8 +46,10 @@ struct DailyHealthPoint: Codable, Equatable, Identifiable {
 
     // Workouts
     var workoutCount: Double?           // count
-    var workoutMinutes: Double?         // minutes
-    var workoutEnergyKcal: Double?      // kcal
+        var workoutMinutes: Double?         // minutes
+        var workoutEnergyKcal: Double?      // kcal
+        var workoutAvgHR: Double?           // average HR across workouts (bpm)
+        var dailyTrimp: Double?             // Bannister TRIMP training stress score
 
     // Body composition (smart scale via Apple Health)
     var bodyWeightLb: Double?           // pounds

@@ -247,33 +247,46 @@ enum ReadinessEngine {
         // MARK: - Load / Stress modifier (separate from recovery)
         // Still simple spike detector vs baseline medians.
         var loadMod = 0
-        if let t = today {
+                if let t = today {
 
-            let workoutEnergyBase = median(baselineSlice.compactMap { $0.workoutEnergyKcal })
-            let workoutMinBase    = median(baselineSlice.compactMap { $0.workoutMinutes })
+                    // MARK: Workout load — TRIMP-based when HR data available, energy fallback otherwise
+                    var workoutLoadScore = 0
+                    let trimpBase = median(
+                        baselineSlice.compactMap { $0.dailyTrimp }.filter { $0 > 0 }
+                    )
 
-            var workoutLoadScore = 0
-            if let base = workoutEnergyBase, let v = t.workoutEnergyKcal, base > 0 {
-                if v > base * 1.5 { workoutLoadScore = -2 }
-                else if v > base * 1.2 { workoutLoadScore = -1 }
-            } else if let base = workoutMinBase, let v = t.workoutMinutes, base > 0 {
-                if v > max(base * 1.5, base + 30) { workoutLoadScore = -2 }
-                else if v > max(base * 1.2, base + 15) { workoutLoadScore = -1 }
-            }
+                    if let trimp = t.dailyTrimp, trimp > 0, let base = trimpBase, base > 0 {
+                        let ratio = trimp / base
+                        if ratio > 2.0      { workoutLoadScore = -3 }
+                        else if ratio > 1.5 { workoutLoadScore = -2 }
+                        else if ratio > 1.2 { workoutLoadScore = -1 }
+                    } else {
+                        // Fallback: spike detector on energy or minutes
+                        let workoutEnergyBase = median(baselineSlice.compactMap { $0.workoutEnergyKcal })
+                        let workoutMinBase    = median(baselineSlice.compactMap { $0.workoutMinutes })
+                        if let base = workoutEnergyBase, let v = t.workoutEnergyKcal, base > 0 {
+                            if v > base * 1.5      { workoutLoadScore = -2 }
+                            else if v > base * 1.2 { workoutLoadScore = -1 }
+                        } else if let base = workoutMinBase, let v = t.workoutMinutes, base > 0 {
+                            if v > max(base * 1.5, base + 30)  { workoutLoadScore = -2 }
+                            else if v > max(base * 1.2, base + 15) { workoutLoadScore = -1 }
+                        }
+                    }
 
-            let stepsBase = median(baselineSlice.compactMap { $0.steps })
-            let moveBase  = median(baselineSlice.compactMap { $0.activeEnergyKcal })
-            let exBase    = median(baselineSlice.compactMap { $0.exerciseMinutes })
+                    // Activity load (steps, movement — non-workout)
+                    let stepsBase = median(baselineSlice.compactMap { $0.steps })
+                    let moveBase  = median(baselineSlice.compactMap { $0.activeEnergyKcal })
+                    let exBase    = median(baselineSlice.compactMap { $0.exerciseMinutes })
 
-            var highs = 0
-            if let base = stepsBase, let v = t.steps, base > 0, v > base * 1.25 { highs += 1 }
-            if let base = moveBase, let v = t.activeEnergyKcal, base > 0, v > base * 1.25 { highs += 1 }
-            if let base = exBase, let v = t.exerciseMinutes, base > 0, v > base * 1.25 { highs += 1 }
+                    var highs = 0
+                    if let base = stepsBase, let v = t.steps, base > 0, v > base * 1.25 { highs += 1 }
+                    if let base = moveBase, let v = t.activeEnergyKcal, base > 0, v > base * 1.25 { highs += 1 }
+                    if let base = exBase, let v = t.exerciseMinutes, base > 0, v > base * 1.25 { highs += 1 }
 
-            let activityScore = (highs == 0) ? 0 : (highs == 1) ? -1 : -2
+                    let activityScore = (highs == 0) ? 0 : (highs == 1) ? -1 : -2
 
-            loadMod = workoutLoadScore + activityScore
-        }
+                    loadMod = workoutLoadScore + activityScore
+                }
 
         // MARK: - Clustering overrides (coach logic)
         let hrvDown10: Bool = {

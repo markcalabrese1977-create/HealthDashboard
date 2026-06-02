@@ -36,10 +36,25 @@ struct WeeklySummary {
     static func build(history: [DailyHealthPoint], manual: ManualReadinessInputs) -> WeeklySummary? {
         guard history.count >= 7 else { return nil }
 
-        let thisWeek = Array(history.suffix(7))
-        let priorWeek = history.count >= 14
-            ? Array(history.suffix(14).prefix(7))
-            : []
+        let cal = Calendar(identifier: .iso8601) // Monday-anchored
+                let today = Date()
+                let fmt = DateFormatter()
+                fmt.locale = Locale(identifier: "en_US_POSIX")
+                fmt.dateFormat = "yyyy-MM-dd"
+
+                let thisWeekStart = cal.dateInterval(of: .weekOfYear, for: today)?.start ?? today
+                let priorWeekStart = cal.date(byAdding: .weekOfYear, value: -1, to: thisWeekStart)!
+
+                let thisWeek = history.filter {
+                    guard let d = fmt.date(from: $0.dayISO) else { return false }
+                    return d >= thisWeekStart
+                }
+                let priorWeek = history.filter {
+                    guard let d = fmt.date(from: $0.dayISO) else { return false }
+                    return d >= priorWeekStart && d < thisWeekStart
+                }
+
+                guard !thisWeek.isEmpty else { return nil }
 
         func avg(_ keyPath: KeyPath<DailyHealthPoint, Double?>, in pts: [DailyHealthPoint]) -> Double? {
             let vals = pts.compactMap { $0[keyPath: keyPath] }
@@ -182,11 +197,13 @@ struct WeeklySummary {
         }
 
         // Resp Rate anomaly only
-        if let m = metrics.first(where: { $0.title == "Resp Rate" }),
-           m.direction == .down,
-           let avg = m.thisWeekAvg {
-            sentences.append("Respiratory rate averaged \(String(format: "%.1f", avg)) br/min — slightly elevated from prior week.")
-        }
+                if let m = metrics.first(where: { $0.title == "Resp Rate" }),
+                   m.direction == .down,
+                   let avg = m.thisWeekAvg,
+                   let d = m.delta {
+                    let magnitude = abs(d) >= 1.5 ? "notably elevated" : "slightly elevated"
+                    sentences.append("Respiratory rate averaged \(String(format: "%.1f", avg)) br/min — \(magnitude) from prior week.")
+                }
 
         // Workouts
         let workoutDays = thisWeek.filter { ($0.workoutCount ?? 0) >= 1 }.count
@@ -204,17 +221,29 @@ struct WeeklySummaryCard: View {
     let summary: WeeklySummary
 
     private var dateRangeLabel: String {
-        guard let first = summary.thisWeek.first?.dayISO,
-              let last = summary.thisWeek.last?.dayISO else { return "This week" }
-        let fmt = DateFormatter()
-        fmt.locale = Locale(identifier: "en_US_POSIX")
-        fmt.dateFormat = "yyyy-MM-dd"
-        let outFmt = DateFormatter()
-        outFmt.dateFormat = "MMM d"
-        let firstStr = fmt.date(from: first).map { outFmt.string(from: $0) } ?? first
-        let lastStr = fmt.date(from: last).map { outFmt.string(from: $0) } ?? last
-        return "\(firstStr) – \(lastStr)"
-    }
+            let cal = Calendar(identifier: .iso8601)
+            let today = Date()
+            let fmt = DateFormatter()
+            fmt.locale = Locale(identifier: "en_US_POSIX")
+            fmt.dateFormat = "yyyy-MM-dd"
+            let outFmt = DateFormatter()
+            outFmt.dateFormat = "MMM d"
+
+            guard let thisWeekStart = cal.dateInterval(of: .weekOfYear, for: today)?.start else {
+                return "This week"
+            }
+
+            let todayStr = outFmt.string(from: today)
+            let weekStartStr = outFmt.string(from: thisWeekStart)
+
+            // Prior week Mon–Sun
+            let priorWeekStart = cal.date(byAdding: .weekOfYear, value: -1, to: thisWeekStart)!
+            let priorWeekEnd = cal.date(byAdding: .day, value: -1, to: thisWeekStart)!
+            let priorStartStr = outFmt.string(from: priorWeekStart)
+            let priorEndStr = outFmt.string(from: priorWeekEnd)
+
+            return "\(weekStartStr) – \(todayStr)  ·  vs \(priorStartStr) – \(priorEndStr)"
+        }
 
     var body: some View {
         DashboardCard(title: "This Week", collapsible: true) {
@@ -309,12 +338,14 @@ private struct WeekMetricRow: View {
     }
 
     private var arrowIcon: String {
-        switch metric.direction {
-        case .up: return "arrow.up"
-        case .down: return "arrow.down"
-        case .neutral: return "minus"
+            guard let d = metric.delta else { return "minus" }
+            switch metric.direction {
+            case .neutral: return "minus"
+            case .up, .down:
+                // Arrow shows the direction the value moved, not whether it improved
+                return d > 0 ? "arrow.up" : "arrow.down"
+            }
         }
-    }
 
     private var deltaStr: String {
             guard let d = metric.delta else { return "" }

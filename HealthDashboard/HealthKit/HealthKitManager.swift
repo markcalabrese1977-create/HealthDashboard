@@ -67,8 +67,10 @@ final class HealthKitManager {
         if let exercise = HKObjectType.quantityType(forIdentifier: .appleExerciseTime) { set.insert(exercise) }
         if let stand = HKObjectType.quantityType(forIdentifier: .appleStandTime) { set.insert(stand) }
 
-        // Workouts
-        set.insert(HKObjectType.workoutType())
+        // Workouts + workout heart rate + VO2 max
+                set.insert(HKObjectType.workoutType())
+                if let hr = HKObjectType.quantityType(forIdentifier: .heartRate) { set.insert(hr) }
+                if let vo2 = HKObjectType.quantityType(forIdentifier: .vo2Max) { set.insert(vo2) }
 
         // Body comp (smart scale)
         if let bodyMass = HKObjectType.quantityType(forIdentifier: .bodyMass) { set.insert(bodyMass) }
@@ -231,12 +233,80 @@ final class HealthKitManager {
         )
 
         func normalizePercent(_ v: Double?) -> Double? {
-            guard let v else { return nil }
-            // If it looks like a fraction, normalize to 0–100.
-            return (v <= 1.5) ? (v * 100.0) : v
-        }
+                    guard let v else { return nil }
+                    return (v <= 1.5) ? (v * 100.0) : v
+                }
 
-        var points: [DailyHealthPoint] = []
+                // MARK: - Compute daily TRIMP (Bannister)
+                // TRIMP = Σ duration_min × HRr × 0.64 × e^(1.92 × HRr)
+                // HRr = (avgHR − restHR) / (maxHR − restHR)
+
+                var dailyTrimpDict: [String: Double] = [:]
+                var dailyAvgHRDict: [String: Double] = [:]
+
+                let allWorkouts = workoutSummary.values.flatMap { $0.workouts }
+
+                // Fetch avg HR per workout concurrently
+        struct WorkoutHREntry {
+                            let avgHR: Double
+                            let peakHR: Double
+                        }
+                        var workoutHRDict: [String: WorkoutHREntry] = [:]
+                        await withTaskGroup(of: (String, WorkoutHREntry?).self) { group in
+                            for w in allWorkouts {
+                                group.addTask {
+                                    guard let summary = try? await self.fetchWorkoutHR(for: w) else {
+                                        return (w.uuid.uuidString, nil)
+                                    }
+                                    return (w.uuid.uuidString, WorkoutHREntry(avgHR: summary.avgHR, peakHR: summary.peakHR))
+                                }
+                            }
+                            for await (uuid, entry) in group {
+                                if let entry { workoutHRDict[uuid] = entry }
+                            }
+                        }
+
+                        // Use observed peak HR (not avg) to estimate personal maxHR — floor 170
+        let observedPeakHR = workoutHRDict.values.map { $0.peakHR }.max() ?? 0
+                        // Assume observed peak ≈ 85% of true max for recreational athletes
+                        // Floor of 155 handles cases with insufficient high-intensity data
+                        let estimatedMaxHR = max(observedPeakHR / 0.85, 155.0)
+
+                for (dayISO, summary) in workoutSummary {
+                    let restHR = rhr[dayISO] ?? 60.0
+                    var dayTrimp = 0.0
+                    var dayHRSum = 0.0
+                    var dayHRCount = 0
+
+                    for w in summary.workouts {
+                                            guard let avgHR = workoutHRDict[w.uuid.uuidString]?.avgHR else { continue }
+                        let durationMin = w.duration / 60.0
+                        let hrr = max(0, min(1, (avgHR - restHR) / (estimatedMaxHR - restHR)))
+                        let trimp = durationMin * hrr * 0.64 * exp(1.92 * hrr)
+                        dayTrimp += trimp
+                        dayHRSum += avgHR
+                        dayHRCount += 1
+                    }
+
+                    if dayTrimp > 0 { dailyTrimpDict[dayISO] = dayTrimp }
+                    if dayHRCount > 0 { dailyAvgHRDict[dayISO] = dayHRSum / Double(dayHRCount) }
+                                    }
+
+                                    #if DEBUG
+        print("💪 estimatedMaxHR=\(String(format: "%.0f", estimatedMaxHR)) observedPeakHR=\(String(format: "%.0f", observedPeakHR))")
+                        for (uuid, entry) in workoutHRDict.prefix(3) {
+                            print("💪 sample uuid=\(uuid.prefix(8)) avgHR=\(String(format: "%.0f", entry.avgHR)) peakHR=\(String(format: "%.0f", entry.peakHR))")
+                        }
+                                    for day in dailyTrimpDict.keys.sorted() {
+                                        print("💪 TRIMP[\(day)] score=\(String(format: "%.1f", dailyTrimpDict[day] ?? 0)) avgHR=\(String(format: "%.0f", dailyAvgHRDict[day] ?? 0))")
+                                    }
+                                    if dailyTrimpDict.isEmpty {
+                                        print("💪 TRIMP: no workout HR data found — check authorization or workout HR samples")
+                                    }
+                                    #endif
+
+                                    var points: [DailyHealthPoint] = []
+        
         points.reserveCapacity(clampedDays)
 
         for dayOffset in 0..<clampedDays {
@@ -293,9 +363,11 @@ final class HealthKitManager {
                     exerciseMinutes: exerciseVal,
                     standHours: standHoursVal,
                     workoutCount: wCount,
-                    workoutMinutes: wMinutes,
-                    workoutEnergyKcal: wEnergy,
-                    bodyWeightLb: weightLb,
+                                        workoutMinutes: wMinutes,
+                                        workoutEnergyKcal: wEnergy,
+                                        workoutAvgHR: dailyAvgHRDict[dayISO],
+                                        dailyTrimp: dailyTrimpDict[dayISO],
+                                        bodyWeightLb: weightLb,
                     bodyFatPct: bodyFatPctVal,
                     leanMassLb: leanLb
                 )
@@ -743,10 +815,11 @@ final class HealthKitManager {
     // MARK: - Workouts (local calendar-day bucket)
 
     private struct WorkoutDaySummary {
-        var count: Double
-        var minutes: Double
-        var energyKcal: Double
-    }
+            var count: Double
+            var minutes: Double
+            var energyKcal: Double
+            var workouts: [HKWorkout] = []
+        }
 
     private func fetchDailyWorkouts(start: Date, end: Date) async throws -> [String: WorkoutDaySummary] {
         let cal = Calendar.current
@@ -808,13 +881,14 @@ final class HealthKitManager {
                     )
 
                     cur.count += 1
-                    cur.minutes += w.duration / 60.0
+                                        cur.minutes += w.duration / 60.0
+                                        cur.workouts.append(w)
 
-                    if let e = w.totalEnergyBurned?.doubleValue(for: .kilocalorie()) {
-                        cur.energyKcal += e
-                    }
+                                        if let e = w.totalEnergyBurned?.doubleValue(for: .kilocalorie()) {
+                                            cur.energyKcal += e
+                                        }
 
-                    out[dayISO] = cur
+                                        out[dayISO] = cur
                 }
 
                 #if DEBUG
@@ -836,6 +910,44 @@ final class HealthKitManager {
             self.store.execute(query)
         }
     }
+    
+    // MARK: - Average HR within a workout window
+
+    private struct WorkoutHRSummary {
+            let avgHR: Double
+            let peakHR: Double
+        }
+
+        private func fetchAverageHR(for workout: HKWorkout) async throws -> Double? {
+            try await fetchWorkoutHR(for: workout)?.avgHR
+        }
+
+        private func fetchWorkoutHR(for workout: HKWorkout) async throws -> WorkoutHRSummary? {
+            guard let hrType = HKObjectType.quantityType(forIdentifier: .heartRate) else { return nil }
+            let predicate = HKQuery.predicateForSamples(
+                withStart: workout.startDate,
+                end: workout.endDate,
+                options: .strictStartDate
+            )
+            return try await withCheckedThrowingContinuation { cont in
+                let query = HKSampleQuery(
+                    sampleType: hrType,
+                    predicate: predicate,
+                    limit: HKObjectQueryNoLimit,
+                    sortDescriptors: nil
+                ) { _, samples, error in
+                    if let error = error { cont.resume(throwing: error); return }
+                    let hrSamples = (samples as? [HKQuantitySample]) ?? []
+                    guard !hrSamples.isEmpty else { cont.resume(returning: nil); return }
+                    let unit = HKUnit.count().unitDivided(by: .minute())
+                    let vals = hrSamples.map { $0.quantity.doubleValue(for: unit) }
+                    let avg = vals.reduce(0, +) / Double(vals.count)
+                    let peak = vals.max() ?? avg
+                    cont.resume(returning: WorkoutHRSummary(avgHR: avg, peakHR: peak))
+                }
+                self.store.execute(query)
+            }
+        }
 
     // MARK: - Sleep breakdown (Apple Watch only; noon->noon)
 

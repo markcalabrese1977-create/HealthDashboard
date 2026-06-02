@@ -18,7 +18,9 @@ struct ContentView: View {
     @State private var showMeasurementsForm = false
 
     @State private var isRefreshing = false
-    @State private var errorText: String?
+        @State private var errorText: String?
+    @State private var selectedMetric: HealthMetric? = nil
+        @State private var selectedBodyMetric: BodyMetric? = nil
 
     // MARK: - Auto refresh
     private let staleThresholdSeconds: TimeInterval = 60 * 10   // 10 min
@@ -218,10 +220,13 @@ struct ContentView: View {
         let sleepVals = last7.map { $0.sleepHours }
 
         var out: [TrendSummary] = [
-            make(title: "Resting HR", unit: "bpm", systemImage: "heart.fill",          betterDirection: .lower,  values: rhrVals),
-            make(title: "HRV",        unit: "ms",  systemImage: "waveform.path.ecg",  betterDirection: .higher, values: hrvVals),
-            make(title: "Sleep",      unit: "h",   systemImage: "bed.double.fill",    betterDirection: .higher, values: sleepVals)
-        ]
+                    make(title: "Resting HR", unit: "bpm", systemImage: "heart.fill",         betterDirection: .lower,  values: rhrVals),
+                    make(title: "HRV",        unit: "ms",  systemImage: "waveform.path.ecg", betterDirection: .higher, values: hrvVals),
+                    make(title: "Sleep",      unit: "h",   systemImage: "bed.double.fill",   betterDirection: .higher, values: sleepVals)
+                ]
+                out[0].metric = .rhr
+                out[1].metric = .hrv
+                out[2].metric = .sleep
 
         let wtAbsVals = last7.map { $0.wristTempDeltaC }
                 if wtAbsVals.contains(where: { $0 != nil }) {
@@ -234,18 +239,21 @@ struct ContentView: View {
                         return val! - base
                     }
                     if wtDeltaVals.contains(where: { $0 != nil }) {
-                        out.append(make(title: "Wrist Temp Δ", unit: "°C", systemImage: "thermometer", betterDirection: .lower, values: wtDeltaVals))
-                    }
+                                            out.append(make(title: "Wrist Temp Δ", unit: "°C", systemImage: "thermometer", betterDirection: .lower, values: wtDeltaVals))
+                                            out[out.count - 1].metric = .wristTemp
+                                        }
                 }
 
         let rrVals = last7.map { $0.respiratoryRate }
         let spo2Vals = last7.map { $0.spo2Pct }
         if rrVals.contains(where: { $0 != nil }) {
-            out.append(make(title: "Resp Rate", unit: "br/min", systemImage: "lungs.fill", betterDirection: .lower, values: rrVals))
-        }
+                    out.append(make(title: "Resp Rate", unit: "br/min", systemImage: "lungs.fill", betterDirection: .lower, values: rrVals))
+                    out[out.count - 1].metric = .respRate
+                }
         if spo2Vals.contains(where: { $0 != nil }) {
-            out.append(make(title: "SpO2", unit: "%", systemImage: "drop.fill", betterDirection: .higher, values: spo2Vals))
-        }
+                    out.append(make(title: "SpO2", unit: "%", systemImage: "drop.fill", betterDirection: .higher, values: spo2Vals))
+                    out[out.count - 1].metric = .spo2
+                }
 
         let stepsVals = last7.map { $0.steps }
         let energyVals = last7.map { $0.activeEnergyKcal }
@@ -284,14 +292,18 @@ struct ContentView: View {
         let lmVals = last7.map { $0.leanMassLb }
 
         if wVals.contains(where: { $0 != nil }) {
-            out.append(make(title: "Weight", unit: "lb", systemImage: "scalemass", betterDirection: .lower, values: wVals))
-        }
-        if bfVals.contains(where: { $0 != nil }) {
-            out.append(make(title: "Body Fat", unit: "%", systemImage: "percent", betterDirection: .lower, values: bfVals))
-        }
-        if lmVals.contains(where: { $0 != nil }) {
-            out.append(make(title: "Lean Mass", unit: "lb", systemImage: "figure.strengthtraining.traditional", betterDirection: .higher, values: lmVals))
-        }
+                    out.append(make(title: "Weight", unit: "lb", systemImage: "scalemass", betterDirection: .lower, values: wVals))
+                    out[out.count - 1].metric = nil
+                    out[out.count - 1].bodyMetric = .weight
+                }
+                if bfVals.contains(where: { $0 != nil }) {
+                    out.append(make(title: "Body Fat", unit: "%", systemImage: "percent", betterDirection: .lower, values: bfVals))
+                    out[out.count - 1].bodyMetric = .bodyFat
+                }
+                if lmVals.contains(where: { $0 != nil }) {
+                    out.append(make(title: "Lean Mass", unit: "lb", systemImage: "figure.strengthtraining.traditional", betterDirection: .higher, values: lmVals))
+                    out[out.count - 1].bodyMetric = .leanMass
+                }
 
         return out
     }
@@ -435,9 +447,9 @@ struct ContentView: View {
                                         ) {
                         let cols = [GridItem(.flexible()), GridItem(.flexible())]
 
-                        LazyVGrid(columns: cols, spacing: 10) {
-                            MetricTile(
-                                                            title: "Resting HR",
+                                            LazyVGrid(columns: cols, spacing: 10) {
+                                                                        MetricTile(
+                                                                            title: "Resting HR",
                                                             subtitle: "Latest",
                                                             value: "\(snapshot.restingHR)",
                                                             unit: "bpm",
@@ -448,7 +460,8 @@ struct ContentView: View {
                                                             higherIsBetter: false,
                                                             metric: .rhr,
                                                             history: history,
-                                                            readiness: readiness
+                                                            readiness: readiness,
+                                                                            onTap: { selectedMetric = $0 }
                                                         )
 
                             MetricTile(
@@ -463,7 +476,8 @@ struct ContentView: View {
                                                             higherIsBetter: true,
                                                             metric: .hrv,
                                                             history: history,
-                                                            readiness: readiness
+                                                            readiness: readiness,
+                                                            onTap: { selectedMetric = $0 }
                                                         )
 
                             MetricTile(
@@ -478,7 +492,8 @@ struct ContentView: View {
                                                             higherIsBetter: true,
                                                             metric: .sleep,
                                                             history: history,
-                                                            readiness: readiness
+                                                            readiness: readiness,
+                                                            onTap: { selectedMetric = $0 }
                                                         )
 
                             if wristTempDisplayDelta != nil {
@@ -494,7 +509,8 @@ struct ContentView: View {
                                                                     higherIsBetter: false,
                                                                     metric: .wristTemp,
                                                                     history: history,
-                                                                    readiness: readiness
+                                                                    readiness: readiness,
+                                                                    onTap: { selectedMetric = $0 }
                                                                 )
                             } else {
                                 MetricTile(
@@ -520,7 +536,8 @@ struct ContentView: View {
                                                                     higherIsBetter: false,
                                                                     metric: .respRate,
                                                                     history: history,
-                                                                    readiness: readiness
+                                                                    readiness: readiness,
+                                                                    onTap: { selectedMetric = $0 }
                                                                 )
                             }
 
@@ -537,7 +554,8 @@ struct ContentView: View {
                                                                     higherIsBetter: true,
                                                                     metric: .sleepEff,
                                                                     history: history,
-                                                                    readiness: readiness
+                                                                    readiness: readiness,
+                                                                    onTap: { selectedMetric = $0 }
                                                                 )
                             }
 
@@ -550,7 +568,8 @@ struct ContentView: View {
                                                                     systemImage: "drop.fill",
                                                                     metric: .spo2,
                                                                     history: history,
-                                                                    readiness: readiness
+                                                                    readiness: readiness,
+                                                                    onTap: { selectedMetric = $0 }
                                                                 )
                             }
                         }
@@ -576,8 +595,27 @@ struct ContentView: View {
                             MetricTile(title: "Stand", subtitle: "Today so far", value: String(format: "%.1f", snapshot.standHoursToday), unit: "h", systemImage: "figure.stand")
 
                             if snapshot.workoutCountToday > 0 {
-                                MetricTile(title: "Workouts", subtitle: "Today", value: "\(snapshot.workoutCountToday)", unit: "", systemImage: "dumbbell.fill")
-                            }
+                                                            MetricTile(title: "Workouts", subtitle: "Today", value: "\(snapshot.workoutCountToday)", unit: "", systemImage: "dumbbell.fill")
+                                                        }
+
+                                                        if let trimp = history.last?.dailyTrimp, trimp > 0 {
+                                                            let trimpBase = {
+                                                                let vals = history.dropLast().compactMap { $0.dailyTrimp }.filter { $0 > 0 }
+                                                                guard !vals.isEmpty else { return 0.0 }
+                                                                return vals.reduce(0, +) / Double(vals.count)
+                                                            }()
+                                                            let delta = trimpBase > 0 ? trimp - trimpBase : nil
+                                                            MetricTile(
+                                                                title: "Training Load",
+                                                                subtitle: "TRIMP score",
+                                                                value: "\(Int(trimp.rounded()))",
+                                                                unit: "",
+                                                                systemImage: "bolt.heart.fill",
+                                                                delta: delta,
+                                                                                                    deltaUnit: "pts",
+                                                                                                    higherIsBetter: false
+                                                            )
+                                                        }
                         }
 
                         if let errorText {
@@ -593,29 +631,32 @@ struct ContentView: View {
                                             trailing: AnyView(Text("Smart scale → Apple Health").font(.caption).foregroundStyle(.secondary)),
                                             collapsible: true
                                         ) {
-                        VStack(alignment: .leading, spacing: 10) {
-                            BodyRow(
-                                title: "Weight",
-                                value: latestBodyPoint?.bodyWeightLb.map { String(format: "%.1f lb", $0) } ?? "--",
-                                footnote: "Last weigh-in",
-                                footnoteValue: fmtDay(latestWeightDayISO)
-                            )
-                            Divider().opacity(0.6)
+                                            VStack(alignment: .leading, spacing: 10) {
+                                                BodyRow(
+                                                    title: "Weight",
+                                                    value: latestBodyPoint?.bodyWeightLb.map { String(format: "%.1f lb", $0) } ?? "--",
+                                                    footnote: "Last weigh-in",
+                                                    footnoteValue: fmtDay(latestWeightDayISO),
+                                                    onTap: { selectedBodyMetric = .weight }
+                                                )
+                                                Divider().opacity(0.6)
 
-                            BodyRow(
-                                title: "Body Fat",
-                                value: latestBodyPoint?.bodyFatPct.map { String(format: "%.1f%%", $0) } ?? "--",
-                                footnote: "Last body fat",
-                                footnoteValue: fmtDay(latestBodyFatDayISO)
-                            )
-                            Divider().opacity(0.6)
+                                                BodyRow(
+                                                    title: "Body Fat",
+                                                    value: latestBodyPoint?.bodyFatPct.map { String(format: "%.1f%%", $0) } ?? "--",
+                                                    footnote: "Last body fat",
+                                                    footnoteValue: fmtDay(latestBodyFatDayISO),
+                                                    onTap: { selectedBodyMetric = .bodyFat }
+                                                )
+                                                Divider().opacity(0.6)
 
-                            BodyRow(
-                                title: "Lean Mass",
-                                value: latestBodyPoint?.leanMassLb.map { String(format: "%.1f lb", $0) } ?? "--",
-                                footnote: "Last lean mass",
-                                footnoteValue: fmtDay(latestLeanMassDayISO)
-                            )
+                                                BodyRow(
+                                                    title: "Lean Mass",
+                                                    value: latestBodyPoint?.leanMassLb.map { String(format: "%.1f lb", $0) } ?? "--",
+                                                    footnote: "Last lean mass",
+                                                    footnoteValue: fmtDay(latestLeanMassDayISO),
+                                                    onTap: { selectedBodyMetric = .leanMass }
+                                                )
                             Divider().opacity(0.6)
 
                             BodyRow(
@@ -711,9 +752,13 @@ struct ContentView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
 
-                            ForEach(trendSummaries) { s in
-                                HDTrendRow(summary: s)
-                            }
+                                                            ForEach(trendSummaries) { s in
+                                                                                            HDTrendRow(
+                                                                                                summary: s,
+                                                                                                onTap: { selectedMetric = $0 },
+                                                                                                onBodyTap: { selectedBodyMetric = $0 }
+                                                                                            )
+                                                                                        }
                         }
                     }
                 }
@@ -722,7 +767,13 @@ struct ContentView: View {
                 .padding(.bottom, 20)
             }
             .background(Color(.systemGroupedBackground))
-            .navigationTitle("Health Dashboard")
+                        .navigationTitle("Health Dashboard")
+                        .navigationDestination(item: $selectedMetric) { metric in
+                                        MetricDetailView(metric: metric, history: history, readiness: readiness)
+                                    }
+                                    .navigationDestination(item: $selectedBodyMetric) { metric in
+                                        BodyMetricDetailView(metric: metric, history: history, dxaScans: dxaScans)
+                                    }
             .navigationBarTitleDisplayMode(.large)
             .onAppear {
                 snapshot = SharedStore.load()
@@ -892,6 +943,8 @@ fileprivate struct TrendSummary: Identifiable {
     let unit: String
     let systemImage: String
     let values: [Double?]
+    var metric: HealthMetric? = nil
+    var bodyMetric: BodyMetric? = nil
 
     enum BetterDirection { case higher, lower, neutral }
     let betterDirection: BetterDirection
@@ -927,6 +980,8 @@ fileprivate func fmtSignedPlain(_ v: Double?, digits: Int, unit: String) -> Stri
 
 fileprivate struct HDTrendRow: View {
     let summary: TrendSummary
+    var onTap: ((HealthMetric) -> Void)? = nil
+    var onBodyTap: ((BodyMetric) -> Void)? = nil
 
     private var isLatestPointToday: Bool {
         summary.nowIndex == summary.values.count - 1
@@ -1082,11 +1137,22 @@ fileprivate struct HDTrendRow: View {
                 .fill(Color(.systemBackground))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.black.opacity(0.06), lineWidth: 1)
-        )
-    }
-}
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(Color.black.opacity(0.06), lineWidth: 1)
+                )
+                .overlay(alignment: .trailing) {
+                    if summary.metric != nil {
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary.opacity(0.5))
+                            .padding(.trailing, 14)
+                    }
+                }
+                .onTapGesture {
+                    if let m = summary.metric { onTap?(m) }
+                }
+            }
+        }
 
 // MARK: - Components (local)
 
@@ -1105,18 +1171,13 @@ fileprivate struct MetricTile: View {
     var history: [DailyHealthPoint] = []
     var readiness: ReadinessResult? = nil
 
-    @State private var isShowingDetail = false
+    var onTap: ((HealthMetric) -> Void)? = nil
 
         var body: some View {
             Group {
-                if metric != nil {
+                if let m = metric {
                     tileContent
-                        .onTapGesture { isShowingDetail = true }
-                        .navigationDestination(isPresented: $isShowingDetail) {
-                            if let m = metric, let r = readiness {
-                                MetricDetailView(metric: m, history: history, readiness: r)
-                            }
-                        }
+                        .onTapGesture { onTap?(m) }
                 } else {
                     tileContent
                 }
@@ -1204,6 +1265,7 @@ fileprivate struct BodyRow: View {
     let value: String
     let footnote: String
     let footnoteValue: String
+    var onTap: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 8) {
@@ -1214,6 +1276,11 @@ fileprivate struct BodyRow: View {
                 Text(value)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.secondary)
+                if onTap != nil {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary.opacity(0.5))
+                }
             }
 
             if !footnote.isEmpty {
@@ -1228,6 +1295,8 @@ fileprivate struct BodyRow: View {
                 }
             }
         }
+        .contentShape(Rectangle())
+        .onTapGesture { onTap?() }
     }
 }
 
