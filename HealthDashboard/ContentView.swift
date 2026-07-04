@@ -27,9 +27,13 @@ struct ContentView: View {
     private let visibleRefreshIntervalSeconds: TimeInterval = 60 * 5 // 5 min
 
     // MARK: - Readiness
-    private var readiness: ReadinessResult {
-            ReadinessEngine.evaluate(history: history, manual: manual)
-        }
+    // Stored, not computed: previously this was a computed property that called
+    // ReadinessEngine.evaluate() on every access, which SwiftUI triggers on every
+    // view-body re-evaluation (including each of the 5 onAppear UserDefaults loads
+    // before HealthKit data even arrives). Now it's set explicitly exactly when its
+    // inputs change: once from cache in onAppear, once after backfill7Days()
+    // completes with full history, and once when manual inputs are edited.
+    @State private var readiness: ReadinessResult = .empty
 
         private var weeklySummary: WeeklySummary? {
             WeeklySummary.build(history: history, manual: manual)
@@ -346,16 +350,28 @@ struct ContentView: View {
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
 
-                            HStack(alignment: .firstTextBaseline) {
-                                Text(readinessPresentation.confidenceLine)
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.secondary)
+                            Text(readinessPresentation.confidenceLine)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
 
-                                Spacer()
+                            if !readiness.drivers.isEmpty {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    let displays = readiness.driverDisplays()
+                                    ForEach(Array(displays.enumerated()), id: \.offset) { index, display in
+                                        DriverRow(display: display, onTap: { selectedMetric = $0 })
 
-                                Text(readinessPresentation.driverLine)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                        if index < displays.count - 1 {
+                                            Divider().opacity(0.5)
+                                        }
+                                    }
+
+                                    if let reconcile = readiness.reconciliationLine {
+                                        Text(reconcile)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .padding(.top, 2)
+                                    }
+                                }
                             }
 
                             Button { showActionDialog = true } label: {
@@ -464,6 +480,19 @@ struct ContentView: View {
                                                                             onTap: { selectedMetric = $0 }
                                                         )
 
+                            // TEMPORARY comparison tile — sleep-window RHR is now the primary
+                            // signal (see ReadinessEngine cutover); this shows Apple's raw
+                            // restingHeartRate purely for reference while we keep an eye on how
+                            // far the two diverge. No delta/baseline — not wired into scoring.
+                            // Remove once the Apple reference is no longer needed.
+                            MetricTile(
+                                title: "RHR (Apple)",
+                                subtitle: "For reference only",
+                                value: history.last?.appleRestingHR.map { "\(Int($0.rounded())) bpm" } ?? "—",
+                                unit: "",
+                                systemImage: "heart.text.square"
+                            )
+
                             MetricTile(
                                                             title: "HRV",
                                                             subtitle: "Overnight",
@@ -479,6 +508,19 @@ struct ContentView: View {
                                                             readiness: readiness,
                                                             onTap: { selectedMetric = $0 }
                                                         )
+
+                            // TEMPORARY comparison tile — sleep-window HRV is now the primary
+                            // signal (see ReadinessEngine cutover); show it explicitly for the
+                            // first few weeks while the 28-day baseline rebuilds from clean data.
+                            // No delta/baseline — not wired into scoring. Remove once the baseline
+                            // has rebuilt and this no longer adds useful context.
+                            MetricTile(
+                                title: "HRV (Sleep)",
+                                subtitle: "Verified sleep window",
+                                value: history.last?.sleepWindowHRV.map { "\(Int($0.rounded())) ms" } ?? "—",
+                                unit: "",
+                                systemImage: "bed.double.fill"
+                            )
 
                             MetricTile(
                                                             title: "Sleep",
@@ -541,7 +583,26 @@ struct ContentView: View {
                                                                 )
                             }
 
-                            if let eff = latestSleepEff {
+                            // Sleep Quality composite (Phase 5) replaces the raw efficiency
+                            // gauge as the headline sleep tile. Composite is today-only (no
+                            // per-day history series), so no sparkline. Falls back to the raw
+                            // efficiency ratio until a composite exists (pre-first-fetch, or an
+                            // unstaged night the engine returns .unavailable for).
+                            if let sq = readiness.sleepQuality, sq != .unavailable {
+                                MetricTile(
+                                                                    title: "Sleep Quality",
+                                                                    subtitle: sq.verdict.title,
+                                                                    value: "\(Int(sq.composite.rounded()))",
+                                                                    unit: "/100",
+                                                                    systemImage: "bed.double.fill",
+                                                                    sparkValues: history.suffix(7).compactMap { $0.sleepCompositeScore },
+                                                                    higherIsBetter: true,
+                                                                    metric: .sleepEff,
+                                                                    history: history,
+                                                                    readiness: readiness,
+                                                                    onTap: { selectedMetric = $0 }
+                                                                )
+                            } else if let eff = latestSleepEff {
                                 MetricTile(
                                                                     title: "Sleep Eff",
                                                                     subtitle: "Overnight",
@@ -598,24 +659,44 @@ struct ContentView: View {
                                                             MetricTile(title: "Workouts", subtitle: "Today", value: "\(snapshot.workoutCountToday)", unit: "", systemImage: "dumbbell.fill")
                                                         }
 
-                                                        if let trimp = history.last?.dailyTrimp, trimp > 0 {
-                                                            let trimpBase = {
-                                                                let vals = history.dropLast().compactMap { $0.dailyTrimp }.filter { $0 > 0 }
-                                                                guard !vals.isEmpty else { return 0.0 }
-                                                                return vals.reduce(0, +) / Double(vals.count)
-                                                            }()
-                                                            let delta = trimpBase > 0 ? trimp - trimpBase : nil
-                                                            MetricTile(
-                                                                title: "Training Load",
-                                                                subtitle: "TRIMP score",
-                                                                value: "\(Int(trimp.rounded()))",
-                                                                unit: "",
-                                                                systemImage: "bolt.heart.fill",
-                                                                delta: delta,
-                                                                                                    deltaUnit: "pts",
-                                                                                                    higherIsBetter: false
-                                                            )
-                                                        }
+                                                        let trimp = history.last?.dailyTrimp ?? 0
+                                                        let trimpBase: Double = {
+                                                            let vals = history.dropLast().compactMap { $0.dailyTrimp }.filter { $0 > 0 }
+                                                            guard !vals.isEmpty else { return 0.0 }
+                                                            return vals.reduce(0, +) / Double(vals.count)
+                                                        }()
+                                                        let trimpDelta: Double? = (trimp > 0 && trimpBase > 0) ? trimp - trimpBase : nil
+                                                        MetricTile(
+                                                            title: "Training Load",
+                                                            subtitle: "TRIMP score",
+                                                            value: trimp > 0 ? "\(Int(trimp.rounded()))" : "—",
+                                                            unit: "",
+                                                            systemImage: "bolt.heart.fill",
+                                                            delta: trimpDelta,
+                                                                                                deltaUnit: "pts",
+                                                                                                higherIsBetter: false,
+                                                            metric: .trainingLoad,
+                                                            onTap: { selectedMetric = $0 }
+                                                        )
+                            let ml = history.last?.mechanicalLoad ?? 0
+                            let mlBase: Double = {
+                                let vals = history.dropLast().compactMap { $0.mechanicalLoad }.filter { $0 > 0 }
+                                guard !vals.isEmpty else { return 0.0 }
+                                return vals.reduce(0, +) / Double(vals.count)
+                            }()
+                            let mlDelta: Double? = (ml > 0 && mlBase > 0) ? ml - mlBase : nil
+                            MetricTile(
+                                title: "Strength Load",
+                                subtitle: "Volume score",
+                                value: ml > 0 ? "\(Int(ml.rounded()))" : "—",
+                                unit: "",
+                                systemImage: "dumbbell.fill",
+                                delta: mlDelta,
+                                deltaUnit: "",
+                                higherIsBetter: false,
+                                metric: .strengthLoad,
+                                onTap: { selectedMetric = $0 }
+                            )
                         }
 
                         if let errorText {
@@ -781,6 +862,9 @@ struct ContentView: View {
                 manual = SharedStore.loadManual()
                 dxaScans = SharedStore.loadDXAScans()
                 bodyMeasurements = SharedStore.loadBodyMeasurements()
+                // One explicit evaluation from cached history — holds until the
+                // post-fetch assignment in backfill7Days() replaces it.
+                readiness = ReadinessEngine.evaluate(history: history, manual: manual)
             }
             .sheet(isPresented: $showDXAForm) {
                 DXAFormView(initial: nil) { scan in
@@ -825,14 +909,29 @@ struct ContentView: View {
         SharedStore.save(snap)
         snapshot = snap
 
+        // Manual inputs (pain/sick) feed the engine directly — re-evaluate once,
+        // explicitly, since readiness is no longer recomputed on every render.
+        // Preserve the last-computed sleep composite: manual edits don't change sleep,
+        // and segments aren't re-fetched here, so carry it over rather than dropping to nil.
+        var reeval = ReadinessEngine.evaluate(history: history, manual: manual)
+        reeval.sleepQuality = readiness.sleepQuality
+        readiness = reeval
+
         WidgetCenter.shared.reloadTimelines(ofKind: "HealthDashboardWidget")
     }
 
     private func backfill7Days() async {
-        await MainActor.run {
+        // Atomic check-and-set on MainActor closes the race window between
+        // refreshIfStale's staleness check and this function starting — without
+        // this, .task (initial load) and .onChange(scenePhase) firing close together
+        // could both pass the staleness check and launch concurrent HK fetches.
+        let started = await MainActor.run { () -> Bool in
+            guard !isRefreshing else { return false }
             isRefreshing = true
             errorText = nil
+            return true
         }
+        guard started else { return }
         defer { Task { @MainActor in isRefreshing = false } }
 
         do {
@@ -898,11 +997,35 @@ struct ContentView: View {
                     snapshot = snap
                 }
 
-                SharedStore.debugDump(tag: "AFTER Backfill 7 Days")
+                // Single post-fetch evaluation with the full 28-day history — the
+                // only place evaluate() runs against complete data per refresh cycle.
+                var evaluated = ReadinessEngine.evaluate(history: history, manual: manual)
+                // Sleep composite (Phase 5): scored from the freshest history + this run's
+                // transient raw segments, assigned alongside the readiness result so it rides
+                // the Watch payload. Not computed by ReadinessEngine (separate engine).
+                evaluated.sleepQuality = SleepQualityEngine.evaluate(
+                    history: history,
+                    todaySegments: HealthKitManager.shared.lastNightSegments,
+                    dumpTrace: true   // headline night only — prints the scored bout list (DEBUG)
+                )
+                readiness = evaluated
+
+                // Push the result to the Watch (if paired) — exactly once per refresh
+                // cycle, right after the engine has run against the freshest history.
+                let payload = WatchPayload(
+                    result: readiness,
+                    last7Days: Array(history.suffix(7).reversed()),
+                    updatedAt: Date()
+                )
+                WatchSessionManager.shared.send(payload)
             }
 
             WidgetCenter.shared.reloadTimelines(ofKind: "HealthDashboardWidget")
-            SharedStore.debugDump(tag: "AFTER reloadTimelines()")
+            // Was previously dumped twice (once here, once before reloadTimelines) —
+            // each debugDump() call re-reads snapshot/history/manual from UserDefaults
+            // purely for logging, doubling the "load() called N times per launch" count
+            // for no functional reason since reloadTimelines doesn't change the stored data.
+            SharedStore.debugDump(tag: "AFTER Backfill 7 Days")
 
         } catch {
             await MainActor.run {
@@ -1297,6 +1420,93 @@ fileprivate struct BodyRow: View {
         }
         .contentShape(Rectangle())
         .onTapGesture { onTap?() }
+    }
+}
+
+fileprivate func healthMetric(forDriverLabel label: String) -> HealthMetric? {
+    switch label {
+    case "RHR":               return .rhr
+    case "HRV":                return .hrv
+    case "Sleep":              return .sleep
+    case "Sleep Quality":      return .sleepEff
+    case "Respiratory Rate":  return .respRate
+    case "Wrist Temp":         return .wristTemp
+    case "SpO2":                return .spo2
+    default:                    return nil   // Pain, Sick — manual inputs, no detail view
+    }
+}
+
+fileprivate struct DriverRow: View {
+    let display: ReadinessResult.DriverDisplay
+    var onTap: ((HealthMetric) -> Void)? = nil
+
+    private var metric: HealthMetric? { healthMetric(forDriverLabel: display.label) }
+
+    private func ordinal(_ n: Int) -> String {
+        switch n {
+        case 2: return "2nd"
+        case 3: return "3rd"
+        default: return "\(n)th"
+        }
+    }
+
+    private var glyph: String {
+        switch display.sentiment {
+        case .positive: return "arrow.up.circle.fill"
+        case .calm:     return "minus.circle"          // acknowledged, not a factor
+        case .warn:     return "arrow.down.circle.fill"
+        }
+    }
+
+    private var tint: Color {
+        switch display.sentiment {
+        case .positive: return Color.green.opacity(0.85)
+        case .calm:     return Color.secondary.opacity(0.7)
+        case .warn:     return Color.orange.opacity(0.85)
+        }
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: glyph)
+                .font(.caption)
+                .foregroundStyle(tint)
+                .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(display.label)
+                        .font(.caption.weight(.semibold))
+
+                    if display.consecutiveDays >= 2 {
+                        Text("\(ordinal(display.consecutiveDays)) day")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.secondary.opacity(0.15))
+                            .clipShape(Capsule())
+                    }
+                }
+
+                Text(display.subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            if metric != nil {
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary.opacity(0.5))
+                    .padding(.top, 2)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if let m = metric { onTap?(m) }
+        }
     }
 }
 

@@ -1,10 +1,41 @@
 import Foundation
 import HealthKit
 
+// SleepStage / SleepSegment are defined in SharedHealthSnapshot.swift (relocated in
+// Phase 2 so they thread through the shared scoring path, not this file).
+
 final class HealthKitManager {
     static let shared = HealthKitManager()
     private let store = HKHealthStore()
     private init() {}
+
+    // Most-recent night's RAW sleep segments from the last fetch. Held in memory only and
+    // handed to SleepQualityEngine transiently — deliberately NOT persisted onto
+    // DailyHealthPoint / SharedStore (would bloat every WatchPayload push).
+    private(set) var lastNightSegments: [SleepSegment] = []
+
+    // Confirmed personal max HR — PINNED for TRIMP's HRr denominator. Previously estimated
+    // as max(observedPeakHR/0.85, 175), which drifted run-to-run (175→173→…) with whatever
+    // peak HR happened to be in the window. Since TRIMP feeds load, and load is the CONTROL
+    // in the sleep-composite partial correlation, a drifting denominator injects noise into
+    // the composite's exoneration. Pinned to the confirmed value; retune here if it changes.
+    private static let confirmedMaxHR: Double = 170.0
+
+    // MARK: - Fetch coalescing
+    //
+    // fetchLast28Days() has more callers than ContentView's own isRefreshing guard
+    // can see: HealthDashboardApp registers an HKObserverQuery per sample type
+    // (5 types — HRV, RHR, SpO2, resp rate, sleep), and HealthKit invokes each
+    // observer's update handler independently, each spawning its own
+    // Task.detached that calls fetchLast28Days() — completely bypassing
+    // ContentView's UI-level guard. Without coalescing here, up to 5 concurrent
+    // 28-day HealthKit fetches can run at once on a single launch.
+    //
+    // Every caller ends up running fetchLast28Days()'s body on the MainActor (see
+    // the comment there), which serializes the check-and-set below, so all
+    // callers — regardless of which queue/Task they call from — either start the
+    // one fetch or await the in-flight one's result.
+    private var inFlightLast28DaysFetch: Task<[DailyHealthPoint], Error>?
 
         #if DEBUG
         private func debugDumpRestingHRSamples(dayStart: Date, dayEnd: Date) {
@@ -70,7 +101,9 @@ final class HealthKitManager {
         // Workouts + workout heart rate + VO2 max
                 set.insert(HKObjectType.workoutType())
                 if let hr = HKObjectType.quantityType(forIdentifier: .heartRate) { set.insert(hr) }
-                if let vo2 = HKObjectType.quantityType(forIdentifier: .vo2Max) { set.insert(vo2) }
+        if let vo2 = HKObjectType.quantityType(forIdentifier: .vo2Max) { set.insert(vo2) }
+                let mlTypeID = HKQuantityTypeIdentifier(rawValue: "com.calabrese.eliteperformance.mechanicalLoad")
+                if let mlType = HKQuantityType.quantityType(forIdentifier: mlTypeID) { set.insert(mlType) }
 
         // Body comp (smart scale)
         if let bodyMass = HKObjectType.quantityType(forIdentifier: .bodyMass) { set.insert(bodyMass) }
@@ -89,6 +122,12 @@ final class HealthKitManager {
 
     /// Fetch last N days INCLUDING today. Oldest -> newest.
     func fetchLastNDays(_ days: Int) async throws -> [DailyHealthPoint] {
+        // One-time reset: clears the 28-day history if it was built from a now-superseded
+        // signal source (e.g. Apple's all-day RHR/HRV before the sleep-window cutover).
+        SharedStore.performSignalCutoverIfNeeded()
+
+        let t0 = Date()
+
         let cal = Calendar.current
         let now = Date()
 
@@ -106,8 +145,29 @@ final class HealthKitManager {
                     end: end
                 )
 
+        // Sleep-window RHR: comparison field, computed from raw HR during verified
+        // asleep states. Parallel to rhrDict above — not used for scoring yet.
+        //
+        // Timing is threaded through as a return value rather than written to a
+        // `self` property from inside this closure — async let spawns a child task
+        // that does not inherit this class's (project-default) MainActor isolation,
+        // so mutating an isolated stored property here would be a Swift 6 error.
+        async let sleepWindowRHRTimed: ([String: Double], TimeInterval) = {
+            let s = Date()
+            let r = try await self.fetchSleepWindowRHR(start: start, end: end)
+            return (r, Date().timeIntervalSince(s))
+        }()
+
         // AFTER
         async let hrvSecondsDict = fetchOvernightHRV(start: start, end: end)
+
+        // Sleep-window HRV: comparison field, computed from raw SDNN during verified
+        // asleep states. Parallel to hrvSecondsDict above.
+        async let sleepWindowHRVTimed: ([String: Double], TimeInterval) = {
+            let s = Date()
+            let r = try await self.fetchSleepWindowHRV(start: start, end: end)
+            return (r, Date().timeIntervalSince(s))
+        }()
 
         // Averages (sleep-window day; noon->noon)
         async let respRateDict = fetchOvernightPointInTimeAverage(
@@ -198,11 +258,14 @@ final class HealthKitManager {
         async let sleepDict = fetchDailySleepBreakdownApple(start: start, end: end)
 
         // Workouts
-        async let workoutSummaryDict = fetchDailyWorkouts(start: start, end: end)
+                async let workoutSummaryDict    = fetchDailyWorkouts(start: start, end: end)
+                async let mechanicalLoadRawDict = fetchMechanicalLoad(start: start, end: end)
 
         let (
             rhr,
+            sleepWindowRHRResult,
             hrvSeconds,
+            sleepWindowHRVResult,
             respRate,
             wristTemp,
             spo2Raw,
@@ -214,23 +277,36 @@ final class HealthKitManager {
             weightDict,
             bodyFatRaw,
             leanDict,
-            workoutSummary
-        ) = try await (
-            rhrDict,
-            hrvSecondsDict,
-            respRateDict,
-            wristTempDict,
-            spo2RawDict,
-            stepsDict,
-            energyDict,
-            exerciseMinDict,
-            standMinDict,
-            sleepDict,
-            weightLbDict,
-            bodyFatRawDict,
-            leanLbDict,
-            workoutSummaryDict
-        )
+            workoutSummary,
+                        mechanicalLoadDict
+                    ) = try await (
+                        rhrDict,
+                        sleepWindowRHRTimed,
+                        hrvSecondsDict,
+                        sleepWindowHRVTimed,
+                        respRateDict,
+                        wristTempDict,
+                        spo2RawDict,
+                        stepsDict,
+                        energyDict,
+                        exerciseMinDict,
+                        standMinDict,
+                        sleepDict,
+                        weightLbDict,
+                        bodyFatRawDict,
+                        leanLbDict,
+                        workoutSummaryDict,
+                        mechanicalLoadRawDict
+                    )
+
+        let sleepWindowRHR = sleepWindowRHRResult.0
+        let sleepWindowHRV = sleepWindowHRVResult.0
+
+        #if DEBUG
+        let elapsed = Date().timeIntervalSince(t0)
+        print("⏱ fetchLastNDays completed in \(String(format: "%.2f", elapsed))s")
+        print("⏱ fetchSleepWindowRHR: \(String(format: "%.2f", sleepWindowRHRResult.1))s  fetchSleepWindowHRV: \(String(format: "%.2f", sleepWindowHRVResult.1))s")
+        #endif
 
         func normalizePercent(_ v: Double?) -> Double? {
                     guard let v else { return nil }
@@ -266,11 +342,11 @@ final class HealthKitManager {
                             }
                         }
 
-                        // Use observed peak HR (not avg) to estimate personal maxHR — floor 170
+                        // maxHR is PINNED to the confirmed value — no longer derived from
+                        // observedPeakHR/0.85 (that drifted the load-control each run).
+                        // observedPeakHR is kept for the DEBUG comparison only.
         let observedPeakHR = workoutHRDict.values.map { $0.peakHR }.max() ?? 0
-                        // Assume observed peak ≈ 85% of true max for recreational athletes
-                        // Floor of 155 handles cases with insufficient high-intensity data
-                        let estimatedMaxHR = max(observedPeakHR / 0.85, 155.0)
+                        let estimatedMaxHR = Self.confirmedMaxHR
 
                 for (dayISO, summary) in workoutSummary {
                     let restHR = rhr[dayISO] ?? 60.0
@@ -324,7 +400,27 @@ final class HealthKitManager {
                 print("⚠️ Dropping implausible RHR avg \(String(format: "%.2f", v)) on \(dayISO)")
             }
             #endif
-            let hrvMS = hrvSeconds[dayISO].map { $0 * 1000.0 }
+            // Comparison field — no plausibility gate applied yet, kept raw for sanity-checking
+            // against Apple's restingHeartRate during the comparison period.
+            let sleepWindowRHRVal = sleepWindowRHR[dayISO]
+
+            // CUTOVER: sleep-window RHR is now the primary signal (Apple's restingHeartRate
+            // blends daytime low-motion periods with true overnight resting state — confirmed
+            // 11-17 bpm discrepancies vs sleep-window values over 4 consecutive nights).
+            // Falls back to Apple's value only when sleep-window data is unavailable.
+            let primaryRHR = sleepWindowRHRVal ?? rhrVal
+
+            let appleHRVMS = hrvSeconds[dayISO].map { $0 * 1000.0 }
+
+            // Comparison field — raw sleep-window-derived HRV, kept for sanity-checking
+            // against Apple's heartRateVariabilitySDNN during the comparison period.
+            let sleepWindowHRVVal = sleepWindowHRV[dayISO]
+
+            // CUTOVER: sleep-window HRV is now the primary signal (Apple's SDNN is an
+            // all-day average including awake readings, mixing daytime sympathetic activity
+            // with overnight parasympathetic state). Falls back to Apple's value only when
+            // sleep-window data is unavailable.
+            let primaryHRV = sleepWindowHRVVal ?? appleHRVMS
 
             let rr = respRate[dayISO]
             let wristAbsC = wristTemp[dayISO]
@@ -336,8 +432,9 @@ final class HealthKitManager {
             let exerciseVal = exerciseMin[dayISO]
             let standHoursVal = standMin[dayISO].map { $0 / 60.0 }
 
-            let sleepVal = sleepDictResolved[dayISO]?.asleepHours
-            let inBedVal = sleepDictResolved[dayISO]?.inBedHours
+            let sleepBreak = sleepDictResolved[dayISO]
+            let sleepVal = sleepBreak?.asleepHours
+            let inBedVal = sleepBreak?.inBedHours
 
             let w = workoutSummary[dayISO]
             let wCount = w?.count ?? 0
@@ -351,12 +448,27 @@ final class HealthKitManager {
             points.append(
                 DailyHealthPoint(
                     dayISO: dayISO,
-                    restingHR: rhrVal,
-                    hrvMS: hrvMS,
+                    restingHR: primaryRHR,
+                    sleepWindowRHR: sleepWindowRHRVal,
+                    appleRestingHR: rhrVal,
+                    hrvMS: primaryHRV,
+                    sleepWindowHRV: sleepWindowHRVVal,
                     sleepHours: sleepVal,
                     sleepInBedHours: inBedVal,
                     respiratoryRate: rr,
                     spo2Pct: spo2PctVal,
+                    // Phase 5: persist per-stage minutes + window bounds (additive; previously
+                    // always nil). Baseline-relative architecture/consistency now have real
+                    // history. Raw segments are NOT persisted (Watch-payload size) — they ride
+                    // the transient scoring path via lastNightSegments.
+                    sleepDeepMinutes: sleepBreak?.deepMinutes,
+                    sleepREMMinutes: sleepBreak?.remMinutes,
+                    sleepCoreMinutes: sleepBreak?.coreMinutes,
+                    sleepUnspecifiedMinutes: sleepBreak?.unspecifiedMinutes,
+                    sleepAwakeMinutes: sleepBreak?.awakeMinutes,
+                    sleepWindowStart: sleepBreak?.windowStart,
+                    sleepWindowEnd: sleepBreak?.windowEnd,
+                    sleepPeriodMinutes: sleepBreak?.sleepPeriodMinutes,
                     wristTempDeltaC: wristAbsC, // NOTE: absolute °C, naming legacy
                     steps: stepsVal,
                     activeEnergyKcal: energyVal,
@@ -366,12 +478,51 @@ final class HealthKitManager {
                                         workoutMinutes: wMinutes,
                                         workoutEnergyKcal: wEnergy,
                                         workoutAvgHR: dailyAvgHRDict[dayISO],
-                                        dailyTrimp: dailyTrimpDict[dayISO],
+                    dailyTrimp: dailyTrimpDict[dayISO],
+                                        mechanicalLoad: mechanicalLoadDict[dayISO],
                                         bodyWeightLb: weightLb,
                     bodyFatPct: bodyFatPctVal,
                     leanMassLb: leanLb
                 )
             )
+        }
+
+        // Backfill the composite series across the window (validation precondition).
+        // Each day D is scored with an EXPANDING PRIOR-ONLY baseline (points[0...D], whose
+        // evaluate() drops the last element for its baseline) and that day's own raw
+        // segments — no lookahead leakage. Stamps sleepCompositeScore on the point and logs
+        // per-axis sub-scores + the `matured` flag to the side store for diagnosis.
+        var axisRecords: [SleepAxisLogRecord] = []
+        for i in points.indices {
+            let slice = Array(points[0...i])
+            let daySegments = sleepDictResolved[points[i].dayISO]?.segments ?? []
+            let sq = SleepQualityEngine.evaluate(history: slice, todaySegments: daySegments)
+
+            if sq != .unavailable {
+                points[i].sleepCompositeScore = sq.composite
+            }
+            axisRecords.append(
+                SleepAxisLogRecord(
+                    dateISO: points[i].dayISO,
+                    composite: sq.composite,
+                    matured: sq.matured,
+                    availableAxes: sq.availableAxes,
+                    subScores: sq.subScores
+                )
+            )
+        }
+        SharedStore.saveSleepAxisLog(axisRecords)
+
+        #if DEBUG
+        // Blocker-2 readout: composite(D) vs logged readiness(D+1) over matured days.
+        print(SleepCompositeValidator.run().summary)
+        #endif
+
+        // Cache the newest night's raw segments for transient sleep-quality scoring.
+        if let newestISO = points.map({ $0.dayISO }).max() {
+            self.lastNightSegments = sleepDictResolved[newestISO]?.segments ?? []
+        } else {
+            self.lastNightSegments = []
         }
 
         return points
@@ -383,7 +534,29 @@ final class HealthKitManager {
     }
 
     func fetchLast28Days() async throws -> [DailyHealthPoint] {
-        try await fetchLastNDays(28)
+        // This class has no explicit isolation, so under the project's
+        // SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor setting it's implicitly
+        // @MainActor — every caller (ContentView, and HealthDashboardApp's
+        // Task.detached observer handlers) hops onto the MainActor to run this
+        // body, so the check-and-set of inFlightLast28DaysFetch below is already
+        // serialized without a lock. (An explicit NSLock can't be used here
+        // anyway — its lock()/unlock() are unavailable from async contexts under
+        // Swift 6.) MainActor serialization is exactly what lets a caller that
+        // arrives while a fetch is already in flight see it and join it instead
+        // of starting a second concurrent HealthKit query.
+        if let existing = inFlightLast28DaysFetch {
+            #if DEBUG
+            print("⏱ fetchLast28Days: joining in-flight fetch instead of starting a new one")
+            #endif
+            return try await existing.value
+        }
+
+        let task = Task { try await self.fetchLastNDays(28) }
+        inFlightLast28DaysFetch = task
+
+        defer { inFlightLast28DaysFetch = nil }
+
+        return try await task.value
     }
 
     // MARK: - Daily Average (quantity, calendar-day)
@@ -814,7 +987,25 @@ final class HealthKitManager {
 
     // MARK: - Workouts (local calendar-day bucket)
 
-    private struct WorkoutDaySummary {
+    // MARK: - Mechanical Load (ElitePerformance → UserDefaults shared store)
+
+    private func fetchMechanicalLoad(start: Date, end: Date) async throws -> [String: Double] {
+        let raw = MechanicalLoadReader.readRange(from: start, to: end)
+        var out: [String: Double] = [:]
+        for (date, value) in raw {
+            let dayISO = Self.isoDayString(Calendar.current.startOfDay(for: date))
+            out[dayISO] = (out[dayISO] ?? 0) + value
+        }
+        #if DEBUG
+        print("⚙️ MechanicalLoad (UserDefaults): \(out.count) day(s) found")
+        for day in out.keys.sorted() {
+            print("⚙️ MechanicalLoad[\(day)] = \(Int((out[day] ?? 0).rounded()))")
+        }
+        #endif
+        return out
+    }
+
+        private struct WorkoutDaySummary {
             var count: Double
             var minutes: Double
             var energyKcal: Double
@@ -847,9 +1038,28 @@ final class HealthKitManager {
                     return
                 }
 
-                let workouts = (samples as? [HKWorkout]) ?? []
+                let rawWorkouts = (samples as? [HKWorkout]) ?? []
+
+                // Dedup near-identical duplicates. Apple Watch auto-detect can emit the same
+                // short workout 2–3× (same activity type, near-identical start + duration),
+                // which inflates count/minutes/energy AND TRIMP (each duplicate scored
+                // separately) — polluting the `load` variable the sleep-composite validation
+                // controls for. Keep the first of any duplicate cluster; genuinely distinct
+                // sessions (different type, or > tolerance apart) are untouched.
+                func isDuplicate(_ w: HKWorkout, of kept: HKWorkout) -> Bool {
+                    w.workoutActivityType == kept.workoutActivityType
+                        && abs(w.startDate.timeIntervalSince(kept.startDate)) < 90
+                        && abs(w.duration - kept.duration) < 90
+                }
+                var workouts: [HKWorkout] = []
+                for w in rawWorkouts where !workouts.contains(where: { isDuplicate(w, of: $0) }) {
+                    workouts.append(w)
+                }
 
                 #if DEBUG
+                if workouts.count != rawWorkouts.count {
+                    print("🏋️ Deduped \(rawWorkouts.count - workouts.count) duplicate workout(s) (\(rawWorkouts.count) → \(workouts.count))")
+                }
                 print("🏋️ Workout raw count=\(workouts.count) range=\(start) → \(end)")
                 for w in workouts {
                     let localDay = cal.startOfDay(for: w.startDate)
@@ -952,8 +1162,40 @@ final class HealthKitManager {
     // MARK: - Sleep breakdown (Apple Watch only; noon->noon)
 
     private struct SleepDayBreakdown {
+        // EXISTING — unchanged. All current consumers (asleepHours/inBedHours) keep reading these.
         var asleepHours: Double
         var inBedHours: Double
+
+        // ADDITIVE (Phase 2a). Per-stage minutes are merged-interval durations (same
+        // overlap-safe method as asleep/inBed). Segments are RAW and unsmoothed —
+        // SleepQualityEngine owns the 5-min min-bout / adjacent-merge noise floor.
+        var deepMinutes: Double
+        var remMinutes: Double
+        var coreMinutes: Double
+        var unspecifiedMinutes: Double
+        var awakeMinutes: Double
+
+        // Merged sleep-window bounds (earliest window start → latest window end) for the
+        // day. Enable onset latency (windowStart → first asleep segment) and consistency
+        // (bed/wake times, midpoint). Nil when no window intervals landed in the day.
+        var windowStart: Date?
+        var windowEnd: Date?
+
+        // Sleep-period time (SPT): first asleep → last asleep, in minutes. This is the
+        // efficiency denominator (asleep / SPT), NOT time-in-bed — so pre-onset latency and
+        // post-final-wake in-bed awake don't double-penalize efficiency (they're captured as
+        // latency). WASO between first and last asleep stays inside SPT and still counts.
+        var sleepPeriodMinutes: Double
+
+        // RAW ordered stage/awake segments, split at noon boundaries, clipped to the day,
+        // sorted by start. NO smoothing, NO min-bout, NO adjacent-merge — persisted as
+        // delivered so the engine can apply its own noise rejection.
+        var segments: [SleepSegment]
+
+        // True when granular substates (deep/REM/core) were present this night. When false
+        // the per-stage split is untrustworthy (unspecified/legacy only) and the engine
+        // should fall back rather than score architecture from empty stage buckets.
+        var hasStagedData: Bool
     }
 
     private func fetchDailySleepBreakdownApple(start: Date, end: Date) async throws -> [String: SleepDayBreakdown] {
@@ -1031,6 +1273,30 @@ final class HealthKitManager {
                     }
                 }
 
+                // Stage classifier (Phase 2a). Maps a raw category value to a SleepStage,
+                // or nil for non-stage values (.inBed — the window container, not a stage).
+                // Legacy/unspecified "asleep" collapses to .unspecified. Awake bouts are
+                // kept RAW here (micro-arousal blips included) — the engine's min-bout floor
+                // decides what counts as a real awakening.
+                func stageFor(_ v: Int) -> SleepStage? {
+                    if #available(iOS 16.0, *) {
+                        switch v {
+                        case HKCategoryValueSleepAnalysis.asleepDeep.rawValue:        return .deep
+                        case HKCategoryValueSleepAnalysis.asleepREM.rawValue:         return .rem
+                        case HKCategoryValueSleepAnalysis.asleepCore.rawValue:        return .core
+                        case HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue: return .unspecified
+                        case HKCategoryValueSleepAnalysis.asleep.rawValue:            return .unspecified
+                        case HKCategoryValueSleepAnalysis.awake.rawValue:             return .awake
+                        default:                                                      return nil
+                        }
+                    } else {
+                        switch v {
+                        case HKCategoryValueSleepAnalysis.asleep.rawValue: return .unspecified
+                        default:                                           return nil
+                        }
+                    }
+                }
+
                 // ---------- Noon→Noon bucketing ----------
                 func sleepWindowStart(for date: Date) -> Date {
                     let startOfDay = cal.startOfDay(for: date)
@@ -1072,8 +1338,51 @@ final class HealthKitManager {
                     return dayToIntervals
                 }
 
+                // Per-stage minutes via the SAME bucket→merge path as asleep/inBed, so a
+                // stage's duration is overlap-safe (duplicate/overlapping Apple samples don't
+                // double-count). Returns minutes per day for one stage.
+                func stageMinutesByDay(_ target: SleepStage) -> [String: Double] {
+                    let byDay = bucketIntervals(appleOnly, clipStart: widenedStart) { stageFor($0) == target }
+                    var result: [String: Double] = [:]
+                    for (day, ivals) in byDay {
+                        result[day] = self.mergeIntervals(ivals)
+                            .reduce(0.0) { $0 + $1.1.timeIntervalSince($1.0) } / 60.0
+                    }
+                    return result
+                }
+
                 let asleepByDay = bucketIntervals(appleOnly, clipStart: widenedStart, predicate: isAsleepValue)
                 let windowByDay = bucketIntervals(appleOnly, clipStart: widenedStart, predicate: isWindowValue)
+
+                // Per-stage merged minutes (Phase 2a).
+                let deepByDay        = stageMinutesByDay(.deep)
+                let remByDay         = stageMinutesByDay(.rem)
+                let coreByDay        = stageMinutesByDay(.core)
+                let unspecifiedByDay = stageMinutesByDay(.unspecified)
+                let awakeByDay       = stageMinutesByDay(.awake)
+
+                // RAW ordered stage/awake segments (Phase 2a). Split across noon boundaries
+                // and clipped exactly like bucketIntervals, but NOT merged — each source
+                // interval survives so the engine can smooth. inBed (nil stage) is skipped.
+                var segmentsByDay: [String: [SleepSegment]] = [:]
+                for s in appleOnly {
+                    guard let stage = stageFor(s.value) else { continue }
+                    var curStart = max(s.startDate, widenedStart)
+                    let sampleEnd = min(s.endDate, end)
+                    while curStart < sampleEnd {
+                        let windowStart = sleepWindowStart(for: curStart)
+                        let nextBoundary = cal.date(byAdding: .day, value: 1, to: windowStart)!
+                        let curEnd = min(sampleEnd, nextBoundary)
+                        let key = sleepLabelISO(for: windowStart)
+                        segmentsByDay[key, default: []].append(
+                            SleepSegment(stage: stage, start: curStart, end: curEnd)
+                        )
+                        curStart = curEnd
+                    }
+                }
+                for key in segmentsByDay.keys {
+                    segmentsByDay[key]?.sort { $0.start < $1.start }
+                }
 
                 var out: [String: SleepDayBreakdown] = [:]
                 let allKeys = Set(asleepByDay.keys).union(windowByDay.keys)
@@ -1091,7 +1400,32 @@ final class HealthKitManager {
                     // ✅ final sanity: window should never be < asleep
                     let inBedHours = max(windowHours, asleepHours)
 
-                    out[dayISO] = SleepDayBreakdown(asleepHours: asleepHours, inBedHours: inBedHours)
+                    // SPT = first asleep → last asleep (excludes pre-onset + post-final-wake
+                    // in-bed awake). Falls back to asleep minutes if no asleep segments.
+                    let daySegs = segmentsByDay[dayISO] ?? []
+                    let asleepSegs = daySegs.filter { $0.stage != .awake }
+                    let sptMinutes: Double = {
+                        guard let f = asleepSegs.map({ $0.start }).min(),
+                              let l = asleepSegs.map({ $0.end }).max(), l > f else {
+                            return asleepHours * 60.0
+                        }
+                        return l.timeIntervalSince(f) / 60.0
+                    }()
+
+                    out[dayISO] = SleepDayBreakdown(
+                        asleepHours: asleepHours,
+                        inBedHours: inBedHours,
+                        deepMinutes: deepByDay[dayISO] ?? 0,
+                        remMinutes: remByDay[dayISO] ?? 0,
+                        coreMinutes: coreByDay[dayISO] ?? 0,
+                        unspecifiedMinutes: unspecifiedByDay[dayISO] ?? 0,
+                        awakeMinutes: awakeByDay[dayISO] ?? 0,
+                        windowStart: mergedWindow.first?.0,
+                        windowEnd: mergedWindow.last?.1,
+                        sleepPeriodMinutes: sptMinutes,
+                        segments: segmentsByDay[dayISO] ?? [],
+                        hasStagedData: hasStaged
+                    )
                 }
 
                 #if DEBUG
@@ -1107,6 +1441,350 @@ final class HealthKitManager {
             self.store.execute(query)
         }
     }
+
+// MARK: - Sleep-window RHR (comparison field; computed from raw HR during verified asleep states)
+// TEMPORARY COMPARISON SOURCE — not wired into ReadinessEngine scoring.
+//
+// Apple's .restingHeartRate has been observed (via debugDumpRestingHRSamples) to
+// occasionally report values well above the true overnight floor — e.g. 76/80 bpm
+// reported on nights where raw 3-6am .heartRate samples showed a floor of 60.0/61.3
+// bpm. Suspected cause: Apple's algorithm can draw from non-sleep, low-motion
+// daytime periods rather than verified sleep. This computes our own RHR by
+// averaging raw .heartRate samples that occur strictly within verified
+// HKCategoryValueSleepAnalysis "asleep" intervals (asleepCore/Deep/REM/Unspecified
+// on iOS 16+, falling back to legacy .asleep pre-iOS 16) — explicitly excluding
+// .inBed and .awake.
+private func fetchSleepWindowRHR(start: Date, end: Date) async throws -> [String: Double] {
+    guard let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else { return [:] }
+    guard let hrType = HKObjectType.quantityType(forIdentifier: .heartRate) else { return [:] }
+
+    let cal = Calendar.current
+    // Widen back one day so we capture the overnight period belonging to the first day label,
+    // same convention as fetchDailySleepBreakdownApple.
+    let widenedStart = cal.date(byAdding: .day, value: -1, to: start) ?? start
+
+    let sleepPredicate = HKQuery.predicateForSamples(withStart: widenedStart, end: end, options: .strictStartDate)
+    let sleepSort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
+
+    let sleepSamples: [HKCategorySample] = try await withCheckedThrowingContinuation { cont in
+        let query = HKSampleQuery(
+            sampleType: sleepType,
+            predicate: sleepPredicate,
+            limit: HKObjectQueryNoLimit,
+            sortDescriptors: [sleepSort]
+        ) { _, samples, error in
+            if let error { cont.resume(throwing: error); return }
+            cont.resume(returning: (samples as? [HKCategorySample]) ?? [])
+        }
+        self.store.execute(query)
+    }
+
+    // Apple-only sources, same filter used for sleep duration (excludes SleepWatch/AutoSleep etc).
+    let appleOnly = sleepSamples.filter { Self.isAppleSleepSource($0) }
+
+    // Prefer granular asleep substates (iOS 16+); fall back to legacy/unspecified "asleep"
+    // when staged data isn't present for this period — same hasStaged check as
+    // fetchDailySleepBreakdownApple.
+    let hasStaged: Bool = {
+        if #available(iOS 16.0, *) {
+            return appleOnly.contains { s in
+                s.value == HKCategoryValueSleepAnalysis.asleepCore.rawValue
+                || s.value == HKCategoryValueSleepAnalysis.asleepDeep.rawValue
+                || s.value == HKCategoryValueSleepAnalysis.asleepREM.rawValue
+            }
+        } else { return false }
+    }()
+
+    func isAsleepValue(_ v: Int) -> Bool {
+        if #available(iOS 16.0, *) {
+            if hasStaged {
+                // Granular substates available — explicitly EXCLUDES .inBed and .awake.
+                return v == HKCategoryValueSleepAnalysis.asleepCore.rawValue
+                    || v == HKCategoryValueSleepAnalysis.asleepDeep.rawValue
+                    || v == HKCategoryValueSleepAnalysis.asleepREM.rawValue
+                    || v == HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue
+            } else {
+                // No staged substates this period — fall back to .asleepUnspecified / legacy .asleep.
+                // Still explicitly EXCLUDES .inBed and .awake.
+                return v == HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue
+                    || v == HKCategoryValueSleepAnalysis.asleep.rawValue
+            }
+        } else {
+            // Pre-iOS 16: only the legacy .asleep value exists.
+            return v == HKCategoryValueSleepAnalysis.asleep.rawValue
+        }
+    }
+
+    func sleepWindowStart(for date: Date) -> Date {
+        let sod = cal.startOfDay(for: date)
+        let noon = cal.date(byAdding: .hour, value: 12, to: sod)!
+        return (date < noon) ? cal.date(byAdding: .day, value: -1, to: noon)! : noon
+    }
+
+    func sleepLabelISO(for windowStart: Date) -> String {
+        let labelDate = cal.date(byAdding: .day, value: 1, to: windowStart)!
+        return Self.isoDayString(labelDate)
+    }
+
+    // Bucket asleep-only intervals by wake-day label (noon->noon) — same bucketing
+    // convention as fetchDailySleepBreakdownApple / fetchSleepWindowDailyAverage.
+    var asleepByDay: [String: [(Date, Date)]] = [:]
+    for s in appleOnly {
+        guard isAsleepValue(s.value) else { continue }
+
+        var curStart = max(s.startDate, widenedStart)
+        let sampleEnd = min(s.endDate, end)
+
+        while curStart < sampleEnd {
+            let windowStart = sleepWindowStart(for: curStart)
+            let nextBoundary = cal.date(byAdding: .day, value: 1, to: windowStart)!
+            let curEnd = min(sampleEnd, nextBoundary)
+
+            let key = sleepLabelISO(for: windowStart)
+            asleepByDay[key, default: []].append((curStart, curEnd))
+
+            curStart = curEnd
+        }
+    }
+
+    var mergedAsleepByDay: [String: [(Date, Date)]] = [:]
+    for (day, intervals) in asleepByDay {
+        mergedAsleepByDay[day] = self.mergeIntervals(intervals)
+    }
+
+    guard !mergedAsleepByDay.isEmpty else {
+        #if DEBUG
+        print("💓 SleepWindowRHR: no verified asleep intervals found for range \(start) → \(end)")
+        #endif
+        return [:]
+    }
+
+    // Single bulk heartRate fetch across the whole range, then assign each sample to
+    // whichever day's merged asleep interval (if any) contains it. This matches the
+    // file's existing pattern of one bulk fetch + in-memory bucketing (see
+    // fetchOvernightHRV, fetchSleepWindowDailyAverage) rather than issuing a separate
+    // HealthKit query per asleep interval.
+    let hrPredicate = HKQuery.predicateForSamples(withStart: widenedStart, end: end, options: .strictStartDate)
+    let hrSort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
+
+    let hrSamples: [HKQuantitySample] = try await withCheckedThrowingContinuation { cont in
+        let query = HKSampleQuery(
+            sampleType: hrType,
+            predicate: hrPredicate,
+            limit: HKObjectQueryNoLimit,
+            sortDescriptors: [hrSort]
+        ) { _, samples, error in
+            if let error { cont.resume(throwing: error); return }
+            cont.resume(returning: (samples as? [HKQuantitySample]) ?? [])
+        }
+        self.store.execute(query)
+    }
+
+    let bpmUnit = HKUnit.count().unitDivided(by: .minute())
+    var sumByDay: [String: Double] = [:]
+    var countByDay: [String: Int] = [:]
+
+    for s in hrSamples {
+        // Apple Watch only — same source gate used for RHR (fetchDailyMostRecentApple).
+        guard s.sourceRevision.source.bundleIdentifier.lowercased().hasPrefix("com.apple.") else { continue }
+
+        let windowStart = sleepWindowStart(for: s.startDate)
+        let key = sleepLabelISO(for: windowStart)
+
+        guard let intervals = mergedAsleepByDay[key] else { continue }
+        guard intervals.contains(where: { s.startDate >= $0.0 && s.startDate < $0.1 }) else { continue }
+
+        sumByDay[key, default: 0] += s.quantity.doubleValue(for: bpmUnit)
+        countByDay[key, default: 0] += 1
+    }
+
+    var out: [String: Double] = [:]
+    for (day, count) in countByDay where count > 0 {
+        out[day] = (sumByDay[day] ?? 0) / Double(count)
+    }
+
+    #if DEBUG
+    for day in out.keys.sorted() {
+        print("💓 SleepWindowRHR[\(day)] avg=\(String(format: "%.1f", out[day] ?? 0)) bpm samples=\(countByDay[day] ?? 0) asleepIntervals=\(mergedAsleepByDay[day]?.count ?? 0)")
+    }
+    if out.isEmpty {
+        print("💓 SleepWindowRHR: no heart rate samples found within verified asleep windows")
+    }
+    #endif
+
+    return out
+}
+
+// MARK: - Sleep-window HRV (comparison field; computed from raw SDNN during verified asleep states)
+// TEMPORARY COMPARISON SOURCE — same architecture as fetchSleepWindowRHR above.
+//
+// Apple's .heartRateVariabilitySDNN is computed as an all-day average of readings
+// taken roughly every 15 minutes, including while awake — mixing daytime sympathetic
+// activity with overnight parasympathetic state. Raw samples confirm this: SDNN can
+// range from ~7.7ms during deep sleep to ~56ms shortly after waking within the same
+// calendar day. This computes our own HRV by averaging raw .heartRateVariabilitySDNN
+// samples that occur strictly within verified HKCategoryValueSleepAnalysis "asleep"
+// intervals (asleepCore/Deep/REM/Unspecified on iOS 16+, falling back to legacy
+// .asleep pre-iOS 16) — explicitly excluding .inBed and .awake.
+private func fetchSleepWindowHRV(start: Date, end: Date) async throws -> [String: Double] {
+    guard let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else { return [:] }
+    guard let hrvType = HKObjectType.quantityType(forIdentifier: .heartRateVariabilitySDNN) else { return [:] }
+
+    let cal = Calendar.current
+    // Widen back one day so we capture the overnight period belonging to the first day label,
+    // same convention as fetchDailySleepBreakdownApple / fetchSleepWindowRHR.
+    let widenedStart = cal.date(byAdding: .day, value: -1, to: start) ?? start
+
+    let sleepPredicate = HKQuery.predicateForSamples(withStart: widenedStart, end: end, options: .strictStartDate)
+    let sleepSort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
+
+    let sleepSamples: [HKCategorySample] = try await withCheckedThrowingContinuation { cont in
+        let query = HKSampleQuery(
+            sampleType: sleepType,
+            predicate: sleepPredicate,
+            limit: HKObjectQueryNoLimit,
+            sortDescriptors: [sleepSort]
+        ) { _, samples, error in
+            if let error { cont.resume(throwing: error); return }
+            cont.resume(returning: (samples as? [HKCategorySample]) ?? [])
+        }
+        self.store.execute(query)
+    }
+
+    // Apple-only sources, same filter used for sleep duration (excludes SleepWatch/AutoSleep etc).
+    let appleOnly = sleepSamples.filter { Self.isAppleSleepSource($0) }
+
+    // Prefer granular asleep substates (iOS 16+); fall back to legacy/unspecified "asleep"
+    // when staged data isn't present for this period — same hasStaged check as
+    // fetchDailySleepBreakdownApple / fetchSleepWindowRHR.
+    let hasStaged: Bool = {
+        if #available(iOS 16.0, *) {
+            return appleOnly.contains { s in
+                s.value == HKCategoryValueSleepAnalysis.asleepCore.rawValue
+                || s.value == HKCategoryValueSleepAnalysis.asleepDeep.rawValue
+                || s.value == HKCategoryValueSleepAnalysis.asleepREM.rawValue
+            }
+        } else { return false }
+    }()
+
+    func isAsleepValue(_ v: Int) -> Bool {
+        if #available(iOS 16.0, *) {
+            if hasStaged {
+                // Granular substates available — explicitly EXCLUDES .inBed and .awake.
+                return v == HKCategoryValueSleepAnalysis.asleepCore.rawValue
+                    || v == HKCategoryValueSleepAnalysis.asleepDeep.rawValue
+                    || v == HKCategoryValueSleepAnalysis.asleepREM.rawValue
+                    || v == HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue
+            } else {
+                // No staged substates this period — fall back to .asleepUnspecified / legacy .asleep.
+                // Still explicitly EXCLUDES .inBed and .awake.
+                return v == HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue
+                    || v == HKCategoryValueSleepAnalysis.asleep.rawValue
+            }
+        } else {
+            // Pre-iOS 16: only the legacy .asleep value exists.
+            return v == HKCategoryValueSleepAnalysis.asleep.rawValue
+        }
+    }
+
+    func sleepWindowStart(for date: Date) -> Date {
+        let sod = cal.startOfDay(for: date)
+        let noon = cal.date(byAdding: .hour, value: 12, to: sod)!
+        return (date < noon) ? cal.date(byAdding: .day, value: -1, to: noon)! : noon
+    }
+
+    func sleepLabelISO(for windowStart: Date) -> String {
+        let labelDate = cal.date(byAdding: .day, value: 1, to: windowStart)!
+        return Self.isoDayString(labelDate)
+    }
+
+    // Bucket asleep-only intervals by wake-day label (noon->noon) — same bucketing
+    // convention as fetchDailySleepBreakdownApple / fetchSleepWindowRHR.
+    var asleepByDay: [String: [(Date, Date)]] = [:]
+    for s in appleOnly {
+        guard isAsleepValue(s.value) else { continue }
+
+        var curStart = max(s.startDate, widenedStart)
+        let sampleEnd = min(s.endDate, end)
+
+        while curStart < sampleEnd {
+            let windowStart = sleepWindowStart(for: curStart)
+            let nextBoundary = cal.date(byAdding: .day, value: 1, to: windowStart)!
+            let curEnd = min(sampleEnd, nextBoundary)
+
+            let key = sleepLabelISO(for: windowStart)
+            asleepByDay[key, default: []].append((curStart, curEnd))
+
+            curStart = curEnd
+        }
+    }
+
+    var mergedAsleepByDay: [String: [(Date, Date)]] = [:]
+    for (day, intervals) in asleepByDay {
+        mergedAsleepByDay[day] = self.mergeIntervals(intervals)
+    }
+
+    guard !mergedAsleepByDay.isEmpty else {
+        #if DEBUG
+        print("💓 SleepWindowHRV: no verified asleep intervals found for range \(start) → \(end)")
+        #endif
+        return [:]
+    }
+
+    // Single bulk HRV fetch across the whole range, then assign each sample to
+    // whichever day's merged asleep interval (if any) contains it. Same pattern
+    // as fetchSleepWindowRHR — one bulk fetch + in-memory bucketing rather than
+    // issuing a separate HealthKit query per asleep interval.
+    let hrvPredicate = HKQuery.predicateForSamples(withStart: widenedStart, end: end, options: .strictStartDate)
+    let hrvSort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
+
+    let hrvSamples: [HKQuantitySample] = try await withCheckedThrowingContinuation { cont in
+        let query = HKSampleQuery(
+            sampleType: hrvType,
+            predicate: hrvPredicate,
+            limit: HKObjectQueryNoLimit,
+            sortDescriptors: [hrvSort]
+        ) { _, samples, error in
+            if let error { cont.resume(throwing: error); return }
+            cont.resume(returning: (samples as? [HKQuantitySample]) ?? [])
+        }
+        self.store.execute(query)
+    }
+
+    let msUnit = HKUnit.secondUnit(with: .milli)
+    var sumByDay: [String: Double] = [:]
+    var countByDay: [String: Int] = [:]
+
+    for s in hrvSamples {
+        // Apple Watch only — same source gate used for RHR (fetchDailyMostRecentApple / fetchSleepWindowRHR).
+        guard s.sourceRevision.source.bundleIdentifier.lowercased().hasPrefix("com.apple.") else { continue }
+
+        let windowStart = sleepWindowStart(for: s.startDate)
+        let key = sleepLabelISO(for: windowStart)
+
+        guard let intervals = mergedAsleepByDay[key] else { continue }
+        guard intervals.contains(where: { s.startDate >= $0.0 && s.startDate < $0.1 }) else { continue }
+
+        sumByDay[key, default: 0] += s.quantity.doubleValue(for: msUnit)
+        countByDay[key, default: 0] += 1
+    }
+
+    var out: [String: Double] = [:]
+    for (day, count) in countByDay where count > 0 {
+        out[day] = (sumByDay[day] ?? 0) / Double(count)
+    }
+
+    #if DEBUG
+    for day in out.keys.sorted() {
+        print("💓 SleepWindowHRV[\(day)] avg=\(String(format: "%.1f", out[day] ?? 0)) ms samples=\(countByDay[day] ?? 0) asleepIntervals=\(mergedAsleepByDay[day]?.count ?? 0)")
+    }
+    if out.isEmpty {
+        print("💓 SleepWindowHRV: no HRV samples found within verified asleep windows")
+    }
+    #endif
+
+    return out
+}
 
 #if DEBUG
 func debugDumpSleepSamplesForDay(_ dayISO: String) async throws {

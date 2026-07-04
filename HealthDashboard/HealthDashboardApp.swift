@@ -20,6 +20,7 @@ struct HealthDashboardApp: App {
 
     init() {
         setupHealthKitBackgroundDelivery()
+        _ = WatchSessionManager.shared   // activate WCSession early so it's ready by the first backfill
     }
 
     var body: some Scene {
@@ -72,7 +73,7 @@ struct HealthDashboardApp: App {
 
                         guard let last = points.last else { return }
 
-                        var snap = SharedStore.load()
+                        var snap = await SharedStore.load()
                         let cal = Calendar.current
                         let snapIsToday = cal.isDateInToday(snap.updatedAt)
                         let fetchedHRV = last.hrvMS.map { Int($0.rounded()) }
@@ -113,8 +114,8 @@ struct HealthDashboardApp: App {
                         if let wc = last.workoutCount { snap.workoutCountToday = Int(wc.rounded()) }
                         snap.updatedAt = Date()
 
-                        SharedStore.save(snap)
-                        SharedStore.saveHistory(points)
+                        await SharedStore.save(snap)
+                        await SharedStore.saveHistory(points)
                         WidgetCenter.shared.reloadTimelines(ofKind: "HealthDashboardWidget")
 
                     } catch {

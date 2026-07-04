@@ -10,6 +10,8 @@ enum HealthMetric: String, Identifiable {
     case respRate
     case sleepEff
     case spo2
+    case trainingLoad
+    case strengthLoad
 
     var id: String { rawValue }
 
@@ -20,8 +22,10 @@ enum HealthMetric: String, Identifiable {
         case .sleep:    return "Sleep"
         case .wristTemp: return "Wrist Temp"
         case .respRate: return "Resp Rate"
-        case .sleepEff: return "Sleep Efficiency"
-        case .spo2:     return "SpO2"
+        case .sleepEff: return "Sleep Quality"
+        case .spo2:         return "SpO2"
+        case .trainingLoad: return "Training Load"
+        case .strengthLoad: return "Strength Load"
         }
     }
 
@@ -32,8 +36,10 @@ enum HealthMetric: String, Identifiable {
         case .sleep:    return "h"
         case .wristTemp: return "°C"
         case .respRate: return "br/min"
-        case .sleepEff: return "%"
-        case .spo2:     return "%"
+        case .sleepEff: return ""
+        case .spo2:         return "%"
+        case .trainingLoad: return ""
+        case .strengthLoad: return ""
         }
     }
 
@@ -45,13 +51,16 @@ enum HealthMetric: String, Identifiable {
         case .wristTemp: return "thermometer"
         case .respRate: return "lungs.fill"
         case .sleepEff: return "bed.double.fill"
-        case .spo2:     return "drop.fill"
+        case .spo2:         return "drop.fill"
+        case .trainingLoad: return "bolt.heart.fill"
+        case .strengthLoad: return "dumbbell.fill"
         }
     }
 
     var higherIsBetter: Bool {
         switch self {
         case .rhr, .wristTemp, .respRate: return false
+        case .trainingLoad, .strengthLoad: return false
         default: return true
         }
     }
@@ -69,9 +78,13 @@ enum HealthMetric: String, Identifiable {
         case .respRate:
             return "Breathing rate during sleep is a sensitive early warning signal. Elevated respiratory rate — even 1–2 br/min above your baseline — often appears 1–2 days before other illness symptoms become obvious. It also rises with significant training load."
         case .sleepEff:
-            return "Sleep efficiency is the ratio of time asleep to time in bed. High efficiency (above your baseline) means you fell asleep quickly and stayed asleep. Drops in efficiency indicate fragmented sleep — even when total duration looks acceptable."
+            return "Sleep Quality is a 0–100 composite of sleep architecture (deep/REM/core vs your baseline), duration against a dynamic need, efficiency (latency + wake-after-onset), fragmentation (discrete awakenings), and schedule consistency. Each night is scored against an expanding baseline of your prior nights; the 28-day chart is the composite over time."
         case .spo2:
             return "Blood oxygen saturation measures how well your lungs are oxygenating your blood during sleep. Values consistently below your personal baseline may indicate breathing disruptions during sleep."
+        case .trainingLoad:
+            return "Training Load (TRIMP) quantifies cardiovascular training stress using the Bannister formula — workout duration scaled by intensity relative to your max and resting HR. Scores elevated above your baseline indicate a high-stress training day; tracking trends over 7–28 days reveals accumulated fatigue or effective load management."
+        case .strengthLoad:
+            return "Strength Load is an intensity-weighted volume score from ElitePerformance, calculated as Σ(load × reps × load/e1RM) per set. It captures both volume and relative intensity. Track trends over 7–28 days alongside TRIMP to monitor total training stress across modalities."
         }
     }
 
@@ -84,9 +97,11 @@ enum HealthMetric: String, Identifiable {
             case .wristTemp: return point.wristTempDeltaC
             case .respRate: return point.respiratoryRate
             case .sleepEff:
-                guard let a = point.sleepHours, let b = point.sleepInBedHours, b > 0, b >= a + 0.08 else { return nil }
-                return (a / b) * 100
-            case .spo2:     return point.spo2Pct
+                // Composite series (Phase 6 precondition): the persisted per-night score.
+                return point.sleepCompositeScore
+            case .spo2:         return point.spo2Pct
+            case .trainingLoad:  return point.dailyTrimp
+            case .strengthLoad:  return point.mechanicalLoad
             }
         }
     }
@@ -101,8 +116,10 @@ enum HealthMetric: String, Identifiable {
             return "\(h)h \(m)m"
         case .wristTemp: return String(format: "%+.1f °C", v)
         case .respRate: return String(format: "%.1f br/min", v)
-        case .sleepEff: return "\(Int(v.rounded()))%"
-        case .spo2:     return "\(Int(v.rounded()))%"
+        case .sleepEff: return "\(Int(v.rounded()))"
+        case .spo2:         return "\(Int(v.rounded()))%"
+        case .trainingLoad:  return "\(Int(v.rounded()))"
+        case .strengthLoad:  return v >= 1000 ? String(format: "%.1fK", v / 1000) : "\(Int(v.rounded()))"
         }
     }
 }
@@ -148,7 +165,7 @@ struct MetricDetailView: View {
     }
 
     private var interpretation: String {
-        guard let t = todayValue, let b = baseline, let d = delta else {
+        guard todayValue != nil, let b = baseline, let d = delta else {
             return "Not enough data yet to interpret this metric against your baseline."
         }
 
@@ -173,6 +190,22 @@ struct MetricDetailView: View {
             VStack(alignment: .leading, spacing: 20) {
 
                 // MARK: Hero value
+                if metric == .sleepEff, let sq = readiness.sleepQuality, sq != .unavailable {
+                    // Sleep Quality composite (Phase 5) — today-only. The 28-day chart below
+                    // stays on the efficiency input series (there is no per-day composite).
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("\(Int(sq.composite.rounded()))")
+                            .font(.system(size: 48, weight: .bold, design: .rounded))
+                        Text("\(sq.verdict.title) · composite / 100")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.secondary)
+                        Text(sq.message)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.top, 4)
+                } else {
                 VStack(alignment: .leading, spacing: 4) {
                     if let t = todayValue {
                         Text(metric.formatValue(t))
@@ -187,7 +220,11 @@ struct MetricDetailView: View {
                                     let m = Int((abs(d) - Double(h)) * 60)
                                     return "\(sign)\(h)h \(m)m vs baseline"
                                 case .sleepEff:
-                                    return "\(sign)\(String(format: "%.1f", d))% vs baseline"
+                                    return "\(sign)\(String(format: "%.0f", d)) vs baseline"
+                                case .trainingLoad:
+                                    return "\(sign)\(Int(abs(d).rounded())) pts vs baseline"
+                                case .strengthLoad:
+                                    return "\(sign)\(String(format: "%.1f", abs(d) / 1000))K vs baseline"
                                 default:
                                     return "\(sign)\(String(format: "%.1f", d)) \(metric.unit) vs baseline"
                                 }
@@ -206,6 +243,7 @@ struct MetricDetailView: View {
                     }
                 }
                 .padding(.top, 4)
+                }
 
                 // MARK: 28-day chart
                 VStack(alignment: .leading, spacing: 8) {

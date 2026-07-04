@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Scheme
    LastUpgradeVersion = "2650"
-   version = "1.7">
+   wasCreatedForAppExtension = "YES"
+   version = "2.0">
    <BuildAction
       parallelizeBuildables = "YES"
       buildImplicitDependencies = "YES"
@@ -15,9 +16,23 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "D55406AC2F219C1400967963"
-               BuildableName = "HealthDashboard.app"
-               BlueprintName = "HealthDashboard"
+               BlueprintIdentifier = "A70F142D05A541A08426017E"
+               BuildableName = "HealthDashboardWatchWidget.appex"
+               BlueprintName = "HealthDashboardWatchWidget"
+               ReferencedContainer = "container:HealthDashboard.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "YES"
+            buildForProfiling = "YES"
+            buildForArchiving = "YES"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "86309A3940DAA2AE3861D6C5"
+               BuildableName = "HealthDashboardWatch.app"
+               BlueprintName = "HealthDashboardWatch"
                ReferencedContainer = "container:HealthDashboard.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -29,37 +44,26 @@
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "YES"
       shouldAutocreateTestPlan = "YES">
-      <Testables>
-         <TestableReference
-            skipped = "NO">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "D51283E32FA7D136008B6A7D"
-               BuildableName = "HealthDashboardTests.xctest"
-               BlueprintName = "HealthDashboardTests"
-               ReferencedContainer = "container:HealthDashboard.xcodeproj">
-            </BuildableReference>
-         </TestableReference>
-      </Testables>
    </TestAction>
    <LaunchAction
       buildConfiguration = "Debug"
-      selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
-      selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
+      selectedDebuggerIdentifier = ""
+      selectedLauncherIdentifier = "Xcode.IDEFoundation.Launcher.PosixSpawn"
       launchStyle = "0"
+      askForAppToLaunch = "Yes"
       useCustomWorkingDirectory = "NO"
       ignoresPersistentStateOnLaunch = "NO"
       debugDocumentVersioning = "YES"
       debugServiceExtension = "internal"
       allowLocationSimulation = "YES"
-      queueDebuggingEnableBacktraceRecording = "Yes">
+      launchAutomaticallySubstyle = "2">
       <BuildableProductRunnable
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "D55406AC2F219C1400967963"
-            BuildableName = "HealthDashboard.app"
-            BlueprintName = "HealthDashboard"
+            BlueprintIdentifier = "86309A3940DAA2AE3861D6C5"
+            BuildableName = "HealthDashboardWatch.app"
+            BlueprintName = "HealthDashboardWatch"
             ReferencedContainer = "container:HealthDashboard.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -69,14 +73,16 @@
       shouldUseLaunchSchemeArgsEnv = "YES"
       savedToolIdentifier = ""
       useCustomWorkingDirectory = "NO"
-      debugDocumentVersioning = "YES">
+      debugDocumentVersioning = "YES"
+      askForAppToLaunch = "Yes"
+      launchAutomaticallySubstyle = "2">
       <BuildableProductRunnable
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "D55406AC2F219C1400967963"
-            BuildableName = "HealthDashboard.app"
-            BlueprintName = "HealthDashboard"
+            BlueprintIdentifier = "86309A3940DAA2AE3861D6C5"
+            BuildableName = "HealthDashboardWatch.app"
+            BlueprintName = "HealthDashboardWatch"
             ReferencedContainer = "container:HealthDashboard.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>

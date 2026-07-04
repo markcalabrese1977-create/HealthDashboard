@@ -2,7 +2,17 @@ import Foundation
 
 enum ReadinessEngine {
 
+    #if DEBUG
+    private static var engineRunCount = 0
+    #endif
+
     static func evaluate(history: [DailyHealthPoint], manual: ManualReadinessInputs) -> ReadinessResult {
+
+        #if DEBUG
+        engineRunCount += 1
+        print("🔢 Engine run #\(engineRunCount)")
+        print("🔬 ReadinessEngine v2: signal-weighted scoring (HRV cap -1, Eff cap -1, Sleep +1 above base, convergence bonus at count≥3)")
+        #endif
 
         // We keep UI at 7 days, but engine can use more history for baselines/trends.
         // Expect history oldest -> newest.
@@ -109,13 +119,16 @@ enum ReadinessEngine {
         var spo2Score = 0
         var rrScore = 0
 
+        // TIER 3: Lower confidence — optical PPG, single-day noise significant
+        // HRV earns authority through multi-day trend (hrvConcern), not single reading
+        // Single-day negative score capped at -1
         // HRV score (vs baseline median; cap upside)
         if let cur = today?.hrvMS,
            cur >= 5, cur <= 250,
            let base = hrvBase, base > 0 {
             let d = pctDelta(current: cur, base: base)
             switch d {
-            case (-0.05)...(0.05):
+            case (-0.05)...(0.08):
                 hrvScore = 0
             case (-0.12)...(-0.05):
                 hrvScore = -1
@@ -123,11 +136,15 @@ enum ReadinessEngine {
                 hrvScore = -2
             case ..<(-0.30):
                 hrvScore = -3
-            case (0.05)...(0.12):
+            case (0.08)...(0.20):
                 hrvScore = +1
             default:
                 hrvScore = +2
             }
+
+            // Tier 3 demotion: cap single-day negative contribution at -1.
+            if hrvScore < -1 { hrvScore = -1 }
+
             if hrvScore < 0 { flags.append("HRV ↓") }
         }
 
@@ -138,16 +155,21 @@ enum ReadinessEngine {
            let base = rhrBase {
 
             let d = cur - base
-            if abs(d) <= 3 { rhrScore = 0 }
-            else if d > 3 && d <= 5 { rhrScore = -1 }
-            else if d > 5 && d <= 8 { rhrScore = -2 }
-            else if d > 8 { rhrScore = -3 }
-            else if d < -3 && d >= -5 { rhrScore = +1 }
-            else if d < -5 { rhrScore = +2 }
+            // Tightened now that RHR is sleep-window-derived (observed range: 3 bpm over
+            // 4 nights) rather than Apple's all-day signal (could swing 14 bpm/day from noise).
+            if abs(d) <= 2 { rhrScore = 0 }
+            else if d > 2 && d <= 4 { rhrScore = -1 }
+            else if d > 4 && d <= 6 { rhrScore = -2 }
+            else if d > 6 { rhrScore = -3 }
+            else if d < -2 && d >= -4 { rhrScore = +1 }
+            else if d < -4 { rhrScore = +2 }
 
             if rhrScore < 0 { flags.append("RHR ↑") }
         }
 
+        // TIER 1: High confidence — best-validated signal in the engine
+        // PSG-calibrated; duration reliable even when staging is uncertain
+        // Positive scoring active: >0.5h above baseline earns +1
         // Sleep duration score (asleep hours vs target)
         if let cur = today?.sleepHours {
             let short = sleepTarget - cur
@@ -155,9 +177,18 @@ enum ReadinessEngine {
             else if short <= 1.5 { sleepScore = -1 }
             else if short <= 2.5 { sleepScore = -2 }
             else { sleepScore = -3 }
+
+            // Tier 1 promotion: meaningfully above-average recovery night.
+            if let base = sleepBase, cur > base + 0.5 {
+                sleepScore = 1
+            }
+
             if sleepScore < 0 { flags.append("Sleep ↓") }
         }
 
+        // TIER 3: Lower confidence — Apple algorithm produces implausible values
+        // (e.g. 98% efficiency over 10h). Demoted to -1 max, no positive scoring.
+        // Retained as cluster flag input only.
         // Sleep efficiency score (quality proxy)
         // Goal: catch fragmented nights even when duration looks ok.
         if let effCur = efficiency(asleep: today?.sleepHours, inBed: today?.sleepInBedHours),
@@ -169,10 +200,8 @@ enum ReadinessEngine {
             // Treat it as a supporting signal unless the drop is clearly large.
             if d >= -0.04 {
                 sleepEffScore = 0
-            } else if d >= -0.10 {
-                sleepEffScore = -1
             } else {
-                sleepEffScore = -2
+                sleepEffScore = -1
             }
 
             if sleepEffScore < 0 { flags.append("Sleep quality ↓") }
@@ -240,7 +269,9 @@ enum ReadinessEngine {
             return hrvScore
         }()
 
-        let recoveryScore =
+        // var: convergenceBonus (below, after clusterCount is known) mutates this
+        // before `total` is assembled.
+        var recoveryScore =
             adjustedHRVScore + rhrScore + sleepScore + sleepEffScore + tempScore + spo2Score + rrScore
             + painScore + sickScore
 
@@ -316,11 +347,14 @@ enum ReadinessEngine {
             return totalDropPct >= 0.15
         }()
 
-        let rhrUp4: Bool = {
+        // Tightened from 4.0 to 3.0 bpm now that RHR is sleep-window-derived — the cleaner
+        // signal makes smaller deviations meaningful. NOTE: stored in DailyVerdictRecord
+        // under the unchanged field name `rhrUp4` (verdict log schema is not being touched).
+        let rhrUp3: Bool = {
             guard let cur = today?.restingHR,
                   cur >= 35, cur <= 110,
                   let base = rhrBase else { return false }
-            return (cur - base) >= 4.0
+            return (cur - base) >= 3.0
         }()
 
         let sleepShort1: Bool = {
@@ -333,9 +367,16 @@ enum ReadinessEngine {
             return (cur - base) >= 0.3
         }()
 
+        // 2-day trailing average prevents a single noisy night from firing the cluster flag.
+        // Nightly RR jitters ±0.5 br/min; a one-day spike at threshold is indistinguishable
+        // from noise. rrScore (aggregate) still reads today's single sample — only this binary
+        // cluster flag uses the smoothed input.
         let rrUp10: Bool = {
-            guard let cur = today?.respiratoryRate, let base = rrBase else { return false }
-            return (cur - base) >= 1.0
+            guard let base = rrBase else { return false }
+            let recentRR = Array(full.suffix(2)).compactMap { $0.respiratoryRate }
+            guard !recentRR.isEmpty else { return false }
+            let avg = recentRR.reduce(0, +) / Double(recentRR.count)
+            return (avg - base) >= 1.0
         }()
 
         let sleepEffLow: Bool = {
@@ -353,7 +394,7 @@ enum ReadinessEngine {
 
         let clusterCount = [
             hrvConcern,
-            rhrUp4,
+            rhrUp3,
             sleepShort1,
             tempUp03,
             rrUp10,
@@ -361,9 +402,18 @@ enum ReadinessEngine {
             sickFlag
         ].filter { $0 }.count
 
+        // CHANGE 4: Multi-signal convergence bonus. Three independent noisy sensors
+        // converging on the same direction carries more evidential weight than any single
+        // signal at full magnitude. A single optical reading crossing a threshold should
+        // not drive a Red verdict; convergence of three+ independent cluster flags should.
+        // Applied to recoveryScore (not just total) so it also participates in the
+        // pain-based forceRed condition below.
+        let convergenceBonus = (clusterCount >= 3) ? -1 : 0
+        recoveryScore += convergenceBonus
+
         let forceYellow = clusterCount >= 2
         let forceRed = clusterCount >= 3
-            || (manual.isSick && (hrvDown10 || rhrUp4 || tempUp03 || sleepShort1 || rrUp10))
+            || (manual.isSick && (hrvDown10 || rhrUp3 || tempUp03 || sleepShort1 || rrUp10))
             || (pain >= 5 && recoveryScore <= -4)
 
         // MARK: - Truth color (based on recovery + load + overrides)
@@ -386,6 +436,68 @@ enum ReadinessEngine {
         if forceRed { truth = .red }
         else if forceYellow, truth != .red { truth = .yellow }
 
+        // MARK: - Hysteresis gate (Option A: consecutive-day confirmation for Yellow→Green)
+        // Raw computed verdict is stored to the log unconditionally every run.
+        // The displayed truth is held at Yellow for one extra day if today's raw
+        // verdict is Green but yesterday's stored rawTruth was not Green.
+
+        let rawTruth = truth   // snapshot before any gating
+
+        let todayISO: String = {
+            let c = Calendar.current
+            let comps = c.dateComponents([.year, .month, .day], from: Date())
+            return String(format: "%04d-%02d-%02d",
+                          comps.year ?? 1970, comps.month ?? 1, comps.day ?? 1)
+        }()
+
+        // Persist today's raw verdict (always, before the gate modifies truth).
+        // Cluster flag values are captured as-is from the clustering block above —
+        // this does not change how those flags are computed.
+        SharedStore.appendVerdictLog(
+            DailyVerdictRecord(
+                dateISO: todayISO,
+                rawTotal: total,
+                rawRecovery: recoveryScore,   // load-stripped target for sleep-composite validation
+                rawTruth: rawTruth,
+                hrvDown10: hrvDown10,
+                hrvDownTrend: hrvDownTrend,
+                hrvConcern: hrvConcern,
+                rhrUp4: rhrUp3,
+                sleepShort1: sleepShort1,
+                tempUp03: tempUp03,
+                rrUp10: rrUp10,
+                sleepEffLow: sleepEffLow,
+                sick: sickFlag
+            )
+        )
+
+        if rawTruth == .green {
+            let log_ = SharedStore.loadVerdictLog()
+            // Find yesterday's record.
+            let cal = Calendar.current
+            let yesterdayISO: String = {
+                let yesterday = cal.date(byAdding: .day, value: -1, to: Date()) ?? Date()
+                let comps = cal.dateComponents([.year, .month, .day], from: yesterday)
+                return String(format: "%04d-%02d-%02d",
+                              comps.year ?? 1970, comps.month ?? 1, comps.day ?? 1)
+            }()
+
+            let yesterdayRecord = log_.first(where: { $0.dateISO == yesterdayISO })
+
+            if yesterdayRecord?.rawTruth != .green {
+                // Yesterday was Yellow or Red (or absent — first-run, treat as unconfirmed).
+                // Hold at Yellow for one more day.
+                truth = .yellow
+                #if DEBUG
+                print("🔒 Hysteresis gate: raw=green, yesterday=\(yesterdayRecord?.rawTruth.rawValue ?? "nil") → displayed=yellow (unconfirmed)")
+                #endif
+            } else {
+                #if DEBUG
+                print("✅ Hysteresis gate: raw=green, yesterday=green → displayed=green (confirmed)")
+                #endif
+            }
+        }
+
         // Action defaults to truth; hard-bias to reduce cost if sick/high pain.
         var action = truth
         if manual.isSick || pain >= 7 { action = .red }
@@ -394,7 +506,7 @@ enum ReadinessEngine {
         let canPushKeyLift: Bool =
             (truth == .green)
             && !hrvDown10
-            && !rhrUp4
+            && !rhrUp3
             && !tempUp03
             && !rrUp10
             && !sleepEffLow
@@ -461,7 +573,8 @@ enum ReadinessEngine {
         print("  Base:    HRV=\(fmt(hrvBase)) RHR=\(fmt(rhrBase)) SleepBase=\(fmt(sleepBase)) SleepTarget=\(String(format: "%.2f", sleepTarget)) EffBase=\(fmt(effBase)) RRBase=\(fmt(rrBase)) TempBase=\(fmt(tempBase)) SpO2=\(fmt(spo2Base))")
         print("  Δ:       HRV=\(fmtPct(hrvDeltaPct)) RHR=\(fmt(rhrDeltaAbs)) Sleep=\(fmt(sleepDeltaAbs)) Eff=\(fmt(effDeltaAbs)) RR=\(fmt(rrDeltaAbs)) Temp=\(fmt(tempDeltaAbs)) SpO2=\(fmt(spo2DeltaAbs))")
         print("  Scores:  HRV(raw)=\(hrvScore) HRV(adj)=\(adjustedHRVScore) buffered=\(hrvBufferedByStrongRecovery) RHR=\(rhrScore) Sleep=\(sleepScore) Eff=\(sleepEffScore) RR=\(rrScore) Temp=\(tempScore) SpO2=\(spo2Score) pain=\(painScore) sick=\(sickScore) recovery=\(recoveryScore) load=\(loadMod) total=\(total)")
-        print("  Cluster: hrvDown10=\(hrvDown10) hrvTrend=\(hrvDownTrend) hrvConcern=\(hrvConcern) rhrUp4=\(rhrUp4) sleepShort1=\(sleepShort1) sleepEffLow=\(sleepEffLow) rrUp10=\(rrUp10) tempUp03=\(tempUp03) sick=\(sickFlag) count=\(clusterCount) forceY=\(forceYellow) forceR=\(forceRed)")
+        print("  Cluster: hrvDown10=\(hrvDown10) hrvTrend=\(hrvDownTrend) hrvConcern=\(hrvConcern) rhrUp3=\(rhrUp3) sleepShort1=\(sleepShort1) sleepEffLow=\(sleepEffLow) rrUp10=\(rrUp10) tempUp03=\(tempUp03) sick=\(sickFlag) count=\(clusterCount) forceY=\(forceYellow) forceR=\(forceRed)")
+        print("  Convergence: bonus=\(convergenceBonus) clusterCount=\(clusterCount)")
         print("  Output:  truth=\(truth.title) action=\(action.title) canPush=\(canPushKeyLift)")
         #endif
 
@@ -536,36 +649,68 @@ enum ReadinessEngine {
         
         var drivers: [ReadinessDriver] = []
 
-        func addDriver(_ label: String, _ score: Int) {
+        // Short, signal-naming reason text — distinct from MetricDetailView's
+        // longer "X% above/below baseline" interpretation text.
+        func driverReason(_ label: String, isNegative: Bool) -> String {
+            switch (label, isNegative) {
+            case ("HRV", true):              return "Below baseline — often an early stress or recovery signal."
+            case ("HRV", false):              return "Above baseline — a positive recovery signal."
+            case ("RHR", true):               return "Elevated vs baseline — may reflect fatigue, illness, or strain."
+            case ("RHR", false):              return "Below baseline — a positive recovery signal."
+            case ("Sleep", true):             return "Short vs target — recovery and performance both take a hit."
+            case ("Sleep Quality", true):     return "Fragmented sleep — even with adequate duration."
+            case ("Respiratory Rate", true):  return "Elevated overnight — frequently precedes other symptoms."
+            case ("Wrist Temp", true):        return "Above baseline — worth watching for illness or inflammation."
+            case ("SpO2", true):              return "Lower than usual overnight — can be noisy, watch for repeat patterns."
+            case ("Pain", true):              return "Reported pain is elevated — train around it."
+            case ("Sick", true):              return "Marked sick — recovery takes priority over training."
+            default:                          return "Off from baseline."
+            }
+        }
+
+        func addDriver(_ label: String, _ score: Int, consecutiveFlag: KeyPath<DailyVerdictRecord, Bool>? = nil) {
             guard score != 0 else { return }
 
             let isNegative = score < 0
+
+            // Cluster flags only describe negative/concerning states, so only
+            // look up a streak when this driver is actually a negative one.
+            let consecutiveDays: Int = {
+                guard isNegative, let kp = consecutiveFlag else { return 0 }
+                return SharedStore.consecutiveDaysActive(flag: kp, asOf: todayISO)
+            }()
 
             drivers.append(
                 ReadinessDriver(
                     label: label,
                     impact: abs(score),
-                    isNegative: isNegative
+                    isNegative: isNegative,
+                    reason: driverReason(label, isNegative: isNegative),
+                    consecutiveDays: consecutiveDays
                 )
             )
         }
 
-        addDriver("HRV", adjustedHRVScore)
-        addDriver("RHR", rhrScore)
-        addDriver("Sleep", sleepScore)
-        addDriver("Sleep Quality", sleepEffScore)
-        addDriver("Respiratory Rate", rrScore)
-        addDriver("Wrist Temp", tempScore)
+        addDriver("HRV", adjustedHRVScore, consecutiveFlag: \.hrvDown10)
+        addDriver("RHR", rhrScore, consecutiveFlag: \.rhrUp4)
+        addDriver("Sleep", sleepScore, consecutiveFlag: \.sleepShort1)
+        addDriver("Sleep Quality", sleepEffScore, consecutiveFlag: \.sleepEffLow)
+        addDriver("Respiratory Rate", rrScore, consecutiveFlag: \.rrUp10)
+        addDriver("Wrist Temp", tempScore, consecutiveFlag: \.tempUp03)
         addDriver("SpO2", spo2Score)
         addDriver("Pain", painScore)
-        addDriver("Sick", sickScore)
+        addDriver("Sick", sickScore, consecutiveFlag: \.sick)
 
         let topDrivers = drivers
             .sorted { $0.impact > $1.impact }
             .prefix(3)
         
+        let cardioLoad = today?.dailyTrimp ?? 0
+        let mechanicalLoad = MechanicalLoadReader.read(for: Date())
+
         return ReadinessResult(
             truth: truth,
+            rawTruth: rawTruth,
             action: action,
             confidence: confidence,
             flags: Array(uniqueFlags),
@@ -578,7 +723,10 @@ enum ReadinessEngine {
             sleepDelta: sleepDeltaAbs,
             tempDelta: tempDeltaAbs,
             rrDelta: rrDeltaAbs,
-            effDelta: effDeltaForResult
+            effDelta: effDeltaForResult,
+            cardioLoad: cardioLoad,
+            mechanicalLoad: mechanicalLoad,
+            totalScore: total
         )
     }
 }

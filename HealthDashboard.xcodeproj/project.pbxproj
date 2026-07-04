@@ -7,12 +7,44 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		052BBCC2C8152B1A674DD775 /* WatchConnectivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7C84661A3EE44DACDAE02B82 /* WatchConnectivity.framework */; };
+		0BB0E458818B8281338D590B /* SharedHealthSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 167C5B523ABA82D0B47E0E7D /* SharedHealthSnapshot.swift */; };
+		156BE1EDE04D032708AB3B42 /* WatchVerdictPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86B0BE67A23C9F18D7AE9579 /* WatchVerdictPalette.swift */; };
+		30F9E0BA2DDEFC37F8DB2A5C /* WatchComplication.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86998DDE49E3CBE1893B73EA /* WatchComplication.swift */; };
+		4664B2AC77577DCF4FFD5BAF /* SharedHealthSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 167C5B523ABA82D0B47E0E7D /* SharedHealthSnapshot.swift */; };
+		628D17BF9CF2DD1EC3DCC6C4 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EC9DC00B88BEFFDB9D2EBD39 /* Foundation.framework */; };
+		64CF52447A2E4534028E66AA /* WatchVerdictPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86B0BE67A23C9F18D7AE9579 /* WatchVerdictPalette.swift */; };
+		6CA191C6135AE36B0466EF47 /* HealthDashboardWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = F0465058A7B3BF4E7A1981A8 /* HealthDashboardWatch.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		78409A53028BEEB738249028 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EC9DC00B88BEFFDB9D2EBD39 /* Foundation.framework */; };
+		8E9A5A38A8072233557A1B3C /* WatchRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6200FE2017AC967F894EEDF9 /* WatchRootView.swift */; };
+		AD3C6C1F341B8E070CBFDA43 /* WatchConnectivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7C84661A3EE44DACDAE02B82 /* WatchConnectivity.framework */; };
+		B25E63E9F5922A0E1069BA30 /* HealthDashboardWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A7A5C02BD17FA03F28BDD33 /* HealthDashboardWatchApp.swift */; };
+		B3927CE71BB3760241C7A4CE /* WatchPayload.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DF5AB2ED3EDBA06CBF97EE7 /* WatchPayload.swift */; };
+		CA962FF1A78CAA41764FA04A /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D55406C52F219CCF00967963 /* SwiftUI.framework */; };
 		D55406C42F219CCF00967963 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D55406C32F219CCF00967963 /* WidgetKit.framework */; };
 		D55406C62F219CCF00967963 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D55406C52F219CCF00967963 /* SwiftUI.framework */; };
 		D55406D52F219CD000967963 /* HealthDashboardWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = D55406C12F219CCF00967963 /* HealthDashboardWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		D8D2C3B927C6100A0ABE2264 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D55406C32F219CCF00967963 /* WidgetKit.framework */; };
+		E8F36459B6FF14EB4EA0C3F9 /* WatchSessionReceiver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0757212AF4C0E066400CA4D8 /* WatchSessionReceiver.swift */; };
+		FDFF1DF0ADB58A4BC6A7167B /* WatchPayload.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DF5AB2ED3EDBA06CBF97EE7 /* WatchPayload.swift */; };
+		FEED555ABADB26C749A6B676 /* HealthDashboardWatchWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = FA23DC9BC50FA33E9528D533 /* HealthDashboardWatchWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		01D048541E22E4D1AF80E44F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = D55406A52F219C1400967963 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A70F142D05A541A08426017E;
+			remoteInfo = HealthDashboardWatchWidget;
+		};
+		7889E9E45082A9DC49788F8B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = D55406A52F219C1400967963 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 86309A3940DAA2AE3861D6C5;
+			remoteInfo = HealthDashboardWatch;
+		};
 		D51283E82FA7D136008B6A7D /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = D55406A52F219C1400967963 /* Project object */;
@@ -41,15 +73,52 @@
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		E57EB820B539ED9C4302247D /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				FEED555ABADB26C749A6B676 /* HealthDashboardWatchWidget.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E65A1EB94F32353B6E8A7419 /* Embed Watch Content */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
+			dstSubfolderSpec = 16;
+			files = (
+				6CA191C6135AE36B0466EF47 /* HealthDashboardWatch.app in Embed Watch Content */,
+			);
+			name = "Embed Watch Content";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		0757212AF4C0E066400CA4D8 /* WatchSessionReceiver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WatchSessionReceiver.swift; sourceTree = "<group>"; };
+		167C5B523ABA82D0B47E0E7D /* SharedHealthSnapshot.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SharedHealthSnapshot.swift; sourceTree = "<group>"; };
+		265E520405A2CEBFC19D78EA /* HealthDashboardWatchWidget.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = HealthDashboardWatchWidget.entitlements; sourceTree = "<group>"; };
+		4302988ADB56F57190B8EEBB /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		585FA3FE1CEBB783F3CB1D7B /* HealthDashboardWatch.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = HealthDashboardWatch.entitlements; sourceTree = "<group>"; };
+		6200FE2017AC967F894EEDF9 /* WatchRootView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WatchRootView.swift; sourceTree = "<group>"; };
+		6A7A5C02BD17FA03F28BDD33 /* HealthDashboardWatchApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HealthDashboardWatchApp.swift; sourceTree = "<group>"; };
+		7C84661A3EE44DACDAE02B82 /* WatchConnectivity.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WatchConnectivity.framework; path = System/Library/Frameworks/WatchConnectivity.framework; sourceTree = SDKROOT; };
+		86998DDE49E3CBE1893B73EA /* WatchComplication.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WatchComplication.swift; sourceTree = "<group>"; };
+		86B0BE67A23C9F18D7AE9579 /* WatchVerdictPalette.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WatchVerdictPalette.swift; sourceTree = "<group>"; };
+		9DF5AB2ED3EDBA06CBF97EE7 /* WatchPayload.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WatchPayload.swift; sourceTree = "<group>"; };
+		C17CB53B59788D8C99270C4C /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		D51283E42FA7D136008B6A7D /* HealthDashboardTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HealthDashboardTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D55406AD2F219C1400967963 /* HealthDashboard.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HealthDashboard.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D55406C12F219CCF00967963 /* HealthDashboardWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = HealthDashboardWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		D55406C32F219CCF00967963 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		D55406C52F219CCF00967963 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
 		D55406DC2F219D8A00967963 /* HealthDashboardWidgetExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = HealthDashboardWidgetExtension.entitlements; sourceTree = "<group>"; };
+		EC9DC00B88BEFFDB9D2EBD39 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/WatchOS.platform/Developer/SDKs/WatchOS11.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
+		F0465058A7B3BF4E7A1981A8 /* HealthDashboardWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HealthDashboardWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		FA23DC9BC50FA33E9528D533 /* HealthDashboardWatchWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = HealthDashboardWatchWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -64,6 +133,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Health/BodyMetricDetailView.swift,
+				Health/MechanicalLoadReader.swift,
 				Health/MetricDetailView.swift,
 				Health/ReadinessEngine.swift,
 				Health/WeeklySummaryView.swift,
@@ -104,6 +174,25 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		3D0ABA3D9B72F8C8C85F62F4 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				628D17BF9CF2DD1EC3DCC6C4 /* Foundation.framework in Frameworks */,
+				052BBCC2C8152B1A674DD775 /* WatchConnectivity.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BD1CB945DC10B09152D722E9 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				78409A53028BEEB738249028 /* Foundation.framework in Frameworks */,
+				D8D2C3B927C6100A0ABE2264 /* WidgetKit.framework in Frameworks */,
+				CA962FF1A78CAA41764FA04A /* SwiftUI.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		D51283E12FA7D136008B6A7D /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -115,6 +204,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AD3C6C1F341B8E070CBFDA43 /* WatchConnectivity.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -130,6 +220,37 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		1B1D0D5E40492D4C0C293CAF /* Shared (Watch) */ = {
+			isa = PBXGroup;
+			children = (
+				9DF5AB2ED3EDBA06CBF97EE7 /* WatchPayload.swift */,
+				167C5B523ABA82D0B47E0E7D /* SharedHealthSnapshot.swift */,
+				86B0BE67A23C9F18D7AE9579 /* WatchVerdictPalette.swift */,
+			);
+			name = "Shared (Watch)";
+			path = HealthDashboard/Shared;
+			sourceTree = "<group>";
+		};
+		3F5A04ADBD0A93391B5F9148 /* HealthDashboardWatch */ = {
+			isa = PBXGroup;
+			children = (
+				4302988ADB56F57190B8EEBB /* Info.plist */,
+				585FA3FE1CEBB783F3CB1D7B /* HealthDashboardWatch.entitlements */,
+				0757212AF4C0E066400CA4D8 /* WatchSessionReceiver.swift */,
+				6A7A5C02BD17FA03F28BDD33 /* HealthDashboardWatchApp.swift */,
+				6200FE2017AC967F894EEDF9 /* WatchRootView.swift */,
+			);
+			path = HealthDashboardWatch;
+			sourceTree = "<group>";
+		};
+		601AAF103CB52796BA2ED103 /* watchOS */ = {
+			isa = PBXGroup;
+			children = (
+				EC9DC00B88BEFFDB9D2EBD39 /* Foundation.framework */,
+			);
+			name = watchOS;
+			sourceTree = "<group>";
+		};
 		D55406A42F219C1400967963 = {
 			isa = PBXGroup;
 			children = (
@@ -139,6 +260,9 @@
 				D51283E52FA7D136008B6A7D /* HealthDashboardTests */,
 				D55406C22F219CCF00967963 /* Frameworks */,
 				D55406AE2F219C1400967963 /* Products */,
+				3F5A04ADBD0A93391B5F9148 /* HealthDashboardWatch */,
+				F76F60D524CD1D7C5E37D585 /* HealthDashboardWatchWidget */,
+				1B1D0D5E40492D4C0C293CAF /* Shared (Watch) */,
 			);
 			sourceTree = "<group>";
 		};
@@ -148,6 +272,8 @@
 				D55406AD2F219C1400967963 /* HealthDashboard.app */,
 				D55406C12F219CCF00967963 /* HealthDashboardWidgetExtension.appex */,
 				D51283E42FA7D136008B6A7D /* HealthDashboardTests.xctest */,
+				F0465058A7B3BF4E7A1981A8 /* HealthDashboardWatch.app */,
+				FA23DC9BC50FA33E9528D533 /* HealthDashboardWatchWidget.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -157,13 +283,61 @@
 			children = (
 				D55406C32F219CCF00967963 /* WidgetKit.framework */,
 				D55406C52F219CCF00967963 /* SwiftUI.framework */,
+				601AAF103CB52796BA2ED103 /* watchOS */,
+				7C84661A3EE44DACDAE02B82 /* WatchConnectivity.framework */,
 			);
 			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		F76F60D524CD1D7C5E37D585 /* HealthDashboardWatchWidget */ = {
+			isa = PBXGroup;
+			children = (
+				C17CB53B59788D8C99270C4C /* Info.plist */,
+				265E520405A2CEBFC19D78EA /* HealthDashboardWatchWidget.entitlements */,
+				86998DDE49E3CBE1893B73EA /* WatchComplication.swift */,
+			);
+			path = HealthDashboardWatchWidget;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		86309A3940DAA2AE3861D6C5 /* HealthDashboardWatch */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 3394A6B52F36D66FF1D1F4F0 /* Build configuration list for PBXNativeTarget "HealthDashboardWatch" */;
+			buildPhases = (
+				8EBBCE33AE83BEEA3C7B6166 /* Sources */,
+				3D0ABA3D9B72F8C8C85F62F4 /* Frameworks */,
+				3E980E8381A8F6134A8036D2 /* Resources */,
+				E57EB820B539ED9C4302247D /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				1A6F0663361329779228C28E /* PBXTargetDependency */,
+			);
+			name = HealthDashboardWatch;
+			productName = HealthDashboardWatch;
+			productReference = F0465058A7B3BF4E7A1981A8 /* HealthDashboardWatch.app */;
+			productType = "com.apple.product-type.application";
+		};
+		A70F142D05A541A08426017E /* HealthDashboardWatchWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 591D422020E36570BCA82AE2 /* Build configuration list for PBXNativeTarget "HealthDashboardWatchWidget" */;
+			buildPhases = (
+				25811AFAE0A7DF90B6E5D48D /* Sources */,
+				BD1CB945DC10B09152D722E9 /* Frameworks */,
+				E10D7CDD4B00F48800EAA1DE /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = HealthDashboardWatchWidget;
+			productName = HealthDashboardWatchWidget;
+			productReference = FA23DC9BC50FA33E9528D533 /* HealthDashboardWatchWidget.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		D51283E32FA7D136008B6A7D /* HealthDashboardTests */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = D51283EC2FA7D136008B6A7D /* Build configuration list for PBXNativeTarget "HealthDashboardTests" */;
@@ -181,8 +355,6 @@
 				D51283E52FA7D136008B6A7D /* HealthDashboardTests */,
 			);
 			name = HealthDashboardTests;
-			packageProductDependencies = (
-			);
 			productName = HealthDashboardTests;
 			productReference = D51283E42FA7D136008B6A7D /* HealthDashboardTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
@@ -195,18 +367,18 @@
 				D55406AA2F219C1400967963 /* Frameworks */,
 				D55406AB2F219C1400967963 /* Resources */,
 				D55406DA2F219CD000967963 /* Embed Foundation Extensions */,
+				E65A1EB94F32353B6E8A7419 /* Embed Watch Content */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 				D55406D42F219CD000967963 /* PBXTargetDependency */,
+				2BA90719242E84584F725AB0 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				D55406AF2F219C1400967963 /* HealthDashboard */,
 			);
 			name = HealthDashboard;
-			packageProductDependencies = (
-			);
 			productName = HealthDashboard;
 			productReference = D55406AD2F219C1400967963 /* HealthDashboard.app */;
 			productType = "com.apple.product-type.application";
@@ -227,8 +399,6 @@
 				D55406C72F219CCF00967963 /* HealthDashboardWidget */,
 			);
 			name = HealthDashboardWidgetExtension;
-			packageProductDependencies = (
-			);
 			productName = HealthDashboardWidgetExtension;
 			productReference = D55406C12F219CCF00967963 /* HealthDashboardWidgetExtension.appex */;
 			productType = "com.apple.product-type.app-extension";
@@ -241,7 +411,7 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 2640;
-				LastUpgradeCheck = 2620;
+				LastUpgradeCheck = 2650;
 				TargetAttributes = {
 					D51283E32FA7D136008B6A7D = {
 						CreatedOnToolsVersion = 26.4;
@@ -272,11 +442,20 @@
 				D55406AC2F219C1400967963 /* HealthDashboard */,
 				D55406C02F219CCF00967963 /* HealthDashboardWidgetExtension */,
 				D51283E32FA7D136008B6A7D /* HealthDashboardTests */,
+				86309A3940DAA2AE3861D6C5 /* HealthDashboardWatch */,
+				A70F142D05A541A08426017E /* HealthDashboardWatchWidget */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		3E980E8381A8F6134A8036D2 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		D51283E22FA7D136008B6A7D /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -298,9 +477,40 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		E10D7CDD4B00F48800EAA1DE /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		25811AFAE0A7DF90B6E5D48D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				30F9E0BA2DDEFC37F8DB2A5C /* WatchComplication.swift in Sources */,
+				B3927CE71BB3760241C7A4CE /* WatchPayload.swift in Sources */,
+				0BB0E458818B8281338D590B /* SharedHealthSnapshot.swift in Sources */,
+				64CF52447A2E4534028E66AA /* WatchVerdictPalette.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		8EBBCE33AE83BEEA3C7B6166 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E8F36459B6FF14EB4EA0C3F9 /* WatchSessionReceiver.swift in Sources */,
+				B25E63E9F5922A0E1069BA30 /* HealthDashboardWatchApp.swift in Sources */,
+				8E9A5A38A8072233557A1B3C /* WatchRootView.swift in Sources */,
+				FDFF1DF0ADB58A4BC6A7167B /* WatchPayload.swift in Sources */,
+				4664B2AC77577DCF4FFD5BAF /* SharedHealthSnapshot.swift in Sources */,
+				156BE1EDE04D032708AB3B42 /* WatchVerdictPalette.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		D51283E02FA7D136008B6A7D /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -325,6 +535,18 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		1A6F0663361329779228C28E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = HealthDashboardWatchWidget;
+			target = A70F142D05A541A08426017E /* HealthDashboardWatchWidget */;
+			targetProxy = 01D048541E22E4D1AF80E44F /* PBXContainerItemProxy */;
+		};
+		2BA90719242E84584F725AB0 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = HealthDashboardWatch;
+			target = 86309A3940DAA2AE3861D6C5 /* HealthDashboardWatch */;
+			targetProxy = 7889E9E45082A9DC49788F8B /* PBXContainerItemProxy */;
+		};
 		D51283E92FA7D136008B6A7D /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = D55406AC2F219C1400967963 /* HealthDashboard */;
@@ -338,6 +560,130 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		67F606481CF4590B2794307B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = HealthDashboardWatchWidget/HealthDashboardWatchWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4QU96N83NX;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = HealthDashboardWatchWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = HealthDashboardWatchWidget;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.calabrese.HealthDashboard.watchkitapp.HealthDashboardWatchWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "watchsimulator watchos";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Debug;
+		};
+		A49F482A67AAD7FEE11F2469 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = HealthDashboardWatch/HealthDashboardWatch.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4QU96N83NX;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = HealthDashboardWatch/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = HealthDashboard;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.calabrese.HealthDashboard.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "watchsimulator watchos";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Debug;
+		};
+		C5F7E85436A0F0223C166936 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = HealthDashboardWatchWidget/HealthDashboardWatchWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4QU96N83NX;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = HealthDashboardWatchWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = HealthDashboardWatchWidget;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.calabrese.HealthDashboard.watchkitapp.HealthDashboardWatchWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "watchsimulator watchos";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				VALIDATE_PRODUCT = YES;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Release;
+		};
+		CB8832F5D67F3E04B6D82A6F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = HealthDashboardWatch/HealthDashboardWatch.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4QU96N83NX;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = HealthDashboardWatch/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = HealthDashboard;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.calabrese.HealthDashboard.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "watchsimulator watchos";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				VALIDATE_PRODUCT = YES;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Release;
+		};
 		D51283EA2FA7D136008B6A7D /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -419,6 +765,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = 4QU96N83NX;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -442,6 +789,7 @@
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
@@ -481,6 +829,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = 4QU96N83NX;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -497,6 +846,7 @@
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 			};
 			name = Release;
@@ -509,6 +859,7 @@
 				CODE_SIGN_ENTITLEMENTS = HealthDashboard/HealthDashboard.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 4QU96N83NX;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -556,6 +907,7 @@
 				CODE_SIGN_ENTITLEMENTS = HealthDashboard/HealthDashboard.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 4QU96N83NX;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -665,6 +1017,24 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		3394A6B52F36D66FF1D1F4F0 /* Build configuration list for PBXNativeTarget "HealthDashboardWatch" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CB8832F5D67F3E04B6D82A6F /* Release */,
+				A49F482A67AAD7FEE11F2469 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		591D422020E36570BCA82AE2 /* Build configuration list for PBXNativeTarget "HealthDashboardWatchWidget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C5F7E85436A0F0223C166936 /* Release */,
+				67F606481CF4590B2794307B /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		D51283EC2FA7D136008B6A7D /* Build configuration list for PBXNativeTarget "HealthDashboardTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
