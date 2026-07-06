@@ -498,8 +498,12 @@ enum ReadinessEngine {
             }
         }
 
-        // Action defaults to truth; hard-bias to reduce cost if sick/high pain.
-        var action = truth
+        // Action derives from the RAW verdict, not the hysteresis-gated display truth.
+        // A pure display-hold (rawTruth green, truth held amber for one-day confirmation)
+        // must not issue a behavioral "reduce effort" recommendation — only genuine caution
+        // (load- or recovery-driven yellow/red, where rawTruth itself is not green) stays
+        // authoritative. Sick/high-pain still hard-bias to reduce cost.
+        var action = rawTruth
         if manual.isSick || pain >= 7 { action = .red }
 
         // “Push permission” (general)
@@ -514,24 +518,36 @@ enum ReadinessEngine {
             && !manual.isSick
             && loadMod >= -1
 
-        // Output strings
+        // Output strings. Single source of truth: the card (ReadinessPresentation) and the
+        // Watch (WatchRootView reads actionTitle/actionMessage directly off the result) both
+        // inherit these — so the gate-hold narration is authored HERE, not in presentation().
         let actionTitle: String
         let actionMessage: String
 
-        switch action {
-        case .green:
-            actionTitle = canPushKeyLift ? "Train normally (push allowed)" : "Train normally"
-            actionMessage = canPushKeyLift
-                ? "Run plan as written. You may push one key lift if form stays clean and effort is honest."
-                : "Run plan as written. Keep it clean—no extra cost or hero sets today."
-        case .yellow:
-            actionTitle = "Train with guardrails"
-            actionMessage = """
-            Run the plan, but avoid top-end effort. Stay honest with RIR and skip any push or intensifier work. If something feels off early, adjust instead of forcing it.
-            """
-        case .red:
-            actionTitle = "Reduce cost today"
-            actionMessage = "Reduce: choose the lowest-cost version of training (lighter loads and/or fewer sets). No intensifiers, no grinders."
+        // Gate hold: raw verdict is green but the display is held amber for one-day
+        // confirmation. action is green here (see above) while truth is amber — narrate the
+        // split rather than emitting a bare-green "train normally" with no reason for the amber.
+        let gateHoldGreen = (action == .green && truth == .yellow)
+
+        if gateHoldGreen {
+            actionTitle = ReadinessHoldCopy.title
+            actionMessage = ReadinessHoldCopy.message
+        } else {
+            switch action {
+            case .green:
+                actionTitle = canPushKeyLift ? "Train normally (push allowed)" : "Train normally"
+                actionMessage = canPushKeyLift
+                    ? "Run plan as written. You may push one key lift if form stays clean and effort is honest."
+                    : "Run plan as written. Keep it clean—no extra cost or hero sets today."
+            case .yellow:
+                actionTitle = "Train with guardrails"
+                actionMessage = """
+                Run the plan, but avoid top-end effort. Stay honest with RIR and skip any push or intensifier work. If something feels off early, adjust instead of forcing it.
+                """
+            case .red:
+                actionTitle = "Reduce cost today"
+                actionMessage = "Reduce: choose the lowest-cost version of training (lighter loads and/or fewer sets). No intensifiers, no grinders."
+            }
         }
 
         // Keep flags short and useful
@@ -658,7 +674,8 @@ enum ReadinessEngine {
             case ("RHR", true):               return "Elevated vs baseline — may reflect fatigue, illness, or strain."
             case ("RHR", false):              return "Below baseline — a positive recovery signal."
             case ("Sleep", true):             return "Short vs target — recovery and performance both take a hit."
-            case ("Sleep Quality", true):     return "Fragmented sleep — even with adequate duration."
+            case ("Sleep", false):            return "Above your target — a strong recovery night."
+            case ("Sleep Efficiency", true):  return "Fragmented sleep — even with adequate duration."
             case ("Respiratory Rate", true):  return "Elevated overnight — frequently precedes other symptoms."
             case ("Wrist Temp", true):        return "Above baseline — worth watching for illness or inflammation."
             case ("SpO2", true):              return "Lower than usual overnight — can be noisy, watch for repeat patterns."
@@ -694,7 +711,11 @@ enum ReadinessEngine {
         addDriver("HRV", adjustedHRVScore, consecutiveFlag: \.hrvDown10)
         addDriver("RHR", rhrScore, consecutiveFlag: \.rhrUp4)
         addDriver("Sleep", sleepScore, consecutiveFlag: \.sleepShort1)
-        addDriver("Sleep Quality", sleepEffScore, consecutiveFlag: \.sleepEffLow)
+        // Label is "Sleep Efficiency" (not "Sleep Quality") so the readiness driver row
+        // doesn't collide with the SleepQualityEngine composite tile, which is titled
+        // "Sleep Quality" and can validly show the opposite verdict (they're different
+        // metrics: engine efficiency vs multi-axis composite). Still fires off sleepEffScore.
+        addDriver("Sleep Efficiency", sleepEffScore, consecutiveFlag: \.sleepEffLow)
         addDriver("Respiratory Rate", rrScore, consecutiveFlag: \.rrUp10)
         addDriver("Wrist Temp", tempScore, consecutiveFlag: \.tempUp03)
         addDriver("SpO2", spo2Score)

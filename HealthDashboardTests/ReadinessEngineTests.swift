@@ -607,6 +607,55 @@ final class ReadinessEngineTests: XCTestCase {
         XCTAssertEqual(r.driverDisplays().first?.sentiment, .positive)
     }
 
+    // The gap that shipped the bug: the above test checked ONLY the sentiment enum,
+    // never the subtitle. A positive HRV driver was rendering the calm/negative-dip
+    // fallthrough string ("...below your baseline...") under the green up-arrow.
+    func testHRVPositiveRendersPositiveCopyNotCalmFallback() {
+        let r = card(action: .green, drivers: [driver("HRV", impact: 1, isNegative: false)])
+        let display = r.driverDisplays().first!
+        XCTAssertEqual(display.sentiment, .positive)
+        XCTAssertEqual(display.subtitle, "Above your baseline — good sign.")
+        // Must NOT inherit the negative-dip fallthrough.
+        XCTAssertNotEqual(display.subtitle, "Slightly below your baseline — within normal range.")
+        XCTAssertFalse(display.subtitle.lowercased().contains("below"),
+                       "Positive HRV row must not describe a below-baseline dip: \(display.subtitle)")
+    }
+
+    // Exhaustiveness: all three DriverSentiment cases for HRV must produce distinct,
+    // non-fallthrough subtitles — so no future sentiment silently reuses another's copy.
+    func testHRVAllThreeSentimentsProduceDistinctSubtitles() {
+        let positive = card(action: .green,
+                            drivers: [driver("HRV", impact: 1, isNegative: false)])
+            .driverDisplays().first!
+        let calm = card(action: .green,
+                        drivers: [driver("HRV", impact: 1, isNegative: true)])
+            .driverDisplays().first!
+        let warn = card(action: .yellow,
+                        drivers: [driver("HRV", impact: 1, isNegative: true)])
+            .driverDisplays().first!
+
+        XCTAssertEqual(positive.sentiment, .positive)
+        XCTAssertEqual(calm.sentiment, .calm)
+        XCTAssertEqual(warn.sentiment, .warn)
+
+        let subtitles = Set([positive.subtitle, calm.subtitle, warn.subtitle])
+        XCTAssertEqual(subtitles.count, 3,
+                       "Each HRV sentiment must own a distinct subtitle, not fall through to another's")
+        XCTAssertTrue(positive.subtitle.contains("Above"))
+        XCTAssertTrue(calm.subtitle.contains("within normal range"))
+        XCTAssertTrue(warn.subtitle.contains("weigh on today's read"))
+    }
+
+    // Guards the invariant behind "Sleep Efficiency .positive is unreachable": the engine's
+    // sleepEffScore is 0 or -1 only (no positive scoring), and addDriver drops score==0,
+    // so a Sleep Efficiency driver is always negative. If that ever changes, sleepQualitySubtitle()
+    // (negative-worded, sentiment-blind) would start contradicting a positive glyph — catch it here.
+    func testEngineNeverProducesPositiveSleepEfficiencyDriver() {
+        let r = eval(history(today: point(day: 28)))
+        XCTAssertFalse(r.drivers.contains { $0.label == "Sleep Efficiency" && !$0.isNegative },
+                       "A non-negative Sleep Efficiency driver would reach the negative-only efficiency subtitle")
+    }
+
     // The flagged interaction: Green + sustained (streak>=2) down-driver must NOT put a
     // warn/orange row under the "not enough to change today's call" reconciliation line.
     func testGreenWithSustainedDownDriverDoesNotContradict() {
@@ -619,12 +668,78 @@ final class ReadinessEngineTests: XCTestCase {
                        "No warn row may coexist with a Green reconciliation line")
     }
 
+    // Label-collision (driver vs composite tile) ------------------------------------
+
+    // The reported bug: driver row "Lower sleep efficiency than your norm" (orange/down)
+    // sat inches from the composite tile "Sleep Quality: Excellent 91/100" (green/up) —
+    // same label, opposite verdict, both individually correct. The fix un-collides the
+    // NAMES: the driver is now "Sleep Efficiency", distinct from the composite's tile
+    // title ("Sleep Quality"), so a legitimate divergence no longer reads as a contradiction.
+    func testSleepEfficiencyDriverLabelDistinctFromCompositeTile() {
+        // Engine efficiency driver fires negative while the composite is Excellent/high —
+        // exactly the valid divergence from the screenshot.
+        let sleep = sleepResult(verdict: .excellent, composite: 91,
+                                axes: [(.efficiency, 70), (.fragmentation, 95),
+                                       (.duration, 92), (.architecture, 90), (.consistency, 93)])
+        let r = card(action: .green,
+                     drivers: [driver("Sleep Efficiency", impact: 1, isNegative: true)],
+                     sleep: sleep)
+        let display = r.driverDisplays().first!
+
+        // Driver keeps its (correct) efficiency-anchored subtitle...
+        XCTAssertTrue(display.subtitle.contains("efficiency"),
+                      "Driver still routes to the efficiency subtitle: \(display.subtitle)")
+        // ...but its LABEL no longer collides with the composite tile's name.
+        XCTAssertEqual(display.label, "Sleep Efficiency")
+        XCTAssertNotEqual(display.label, "Sleep Quality")
+        // HealthMetric.sleepEff.title is what the composite tile/detail renders as its
+        // title ("Sleep Quality"). The driver row must not share that string.
+        XCTAssertNotEqual(display.label, HealthMetric.sleepEff.title,
+                          "Driver label must differ from the composite tile title to avoid the collision")
+        XCTAssertEqual(HealthMetric.sleepEff.title, "Sleep Quality",
+                       "Composite tile/detail title stays 'Sleep Quality' (unchanged)")
+        // The divergence is real and intentional — the composite verdict is Excellent.
+        XCTAssertEqual(sleep.verdict, .excellent)
+    }
+
+    // Renamed driver must still route to the efficiency detail view (tap navigation).
+    func testSleepEfficiencyDriverRoutesToSleepEffDetail() {
+        XCTAssertEqual(healthMetric(forDriverLabel: "Sleep Efficiency"), .sleepEff)
+        // Old label no longer routes anywhere (nothing string-matches it).
+        XCTAssertNil(healthMetric(forDriverLabel: "Sleep Quality"))
+    }
+
+    // Composite survives navigation round-trip -------------------------------------
+    // Encodes the fix for the tile reverting to "Sleep Eff" fallback after push-then-pop:
+    // reevaluatePreservingComposite() must re-derive readiness WITHOUT dropping an
+    // already-fetched sleep composite (ReadinessEngine.evaluate() alone leaves it nil).
+
+    func testReevaluatePreservesFetchedComposite() {
+        var previous = ReadinessResult.empty
+        previous.sleepQuality = sleepResult(verdict: .excellent, composite: 91,
+                                            axes: [(.efficiency, 90), (.fragmentation, 94)])
+        // Simulates the onAppear-on-pop re-evaluation with the composite already in hand.
+        let result = reevaluatePreservingComposite(
+            history: history(today: point(day: 28)), manual: .default, previous: previous)
+        XCTAssertNotNil(result.sleepQuality,
+                        "Composite must survive re-evaluation, not revert to the fallback tile")
+        XCTAssertEqual(result.sleepQuality?.composite, 91)
+        XCTAssertEqual(result.sleepQuality?.verdict, .excellent)
+    }
+
+    func testReevaluateNilCompositeStaysNil() {
+        // Cold launch: no composite fetched yet -> re-eval preserves nil (accepted fallback gap).
+        let result = reevaluatePreservingComposite(
+            history: history(today: point(day: 28)), manual: .default, previous: .empty)
+        XCTAssertNil(result.sleepQuality)
+    }
+
     // Label-matches-axis ------------------------------------------------------------
 
     func testSleepLabelNamesEfficiencyNotFragmentation() {
         let sleep = sleepResult(verdict: .fair, composite: 60,
                                 axes: [(.efficiency, 52), (.fragmentation, 88)])
-        let r = card(action: .green, drivers: [driver("Sleep Quality", impact: 1, isNegative: true)], sleep: sleep)
+        let r = card(action: .green, drivers: [driver("Sleep Efficiency", impact: 1, isNegative: true)], sleep: sleep)
         let sub = r.driverDisplays().first!.subtitle
         XCTAssertTrue(sub.contains("efficiency") || sub.contains("Restless"), "Low axis is efficiency: \(sub)")
         XCTAssertFalse(sub.contains("Fragmented"), "Must not assert fragmentation when efficiency is the low axis")
@@ -635,7 +750,7 @@ final class ReadinessEngineTests: XCTestCase {
     func testSleepDriverNamesEfficiencyNotFragmentationEvenWhenCompositeFragLow() {
         let sleep = sleepResult(verdict: .fair, composite: 60,
                                 axes: [(.fragmentation, 50), (.efficiency, 85)])
-        let r = card(action: .green, drivers: [driver("Sleep Quality", impact: 1, isNegative: true)], sleep: sleep)
+        let r = card(action: .green, drivers: [driver("Sleep Efficiency", impact: 1, isNegative: true)], sleep: sleep)
         let sub = r.driverDisplays().first!.subtitle
         XCTAssertTrue(sub.contains("efficiency"), "Driver is the engine efficiency signal: \(sub)")
         XCTAssertFalse(sub.contains("Fragmented"), "Must not adopt the composite's fragmentation axis")
@@ -650,7 +765,7 @@ final class ReadinessEngineTests: XCTestCase {
         let sleep = sleepResult(verdict: .good, composite: 78,
                                 axes: [(.efficiency, 88), (.fragmentation, 84),
                                        (.duration, 80), (.architecture, 82), (.consistency, 79)])
-        let r = card(action: .green, drivers: [driver("Sleep Quality", impact: 1, isNegative: true)], sleep: sleep)
+        let r = card(action: .green, drivers: [driver("Sleep Efficiency", impact: 1, isNegative: true)], sleep: sleep)
         let display = r.driverDisplays().first!
         XCTAssertTrue(display.subtitle.contains("efficiency"),
                       "Engine raised the row — must name efficiency, not suppress: \(display.subtitle)")
@@ -667,7 +782,7 @@ final class ReadinessEngineTests: XCTestCase {
     func testGoodCompositeNonEfficiencyWeakAxisStillNamesEfficiency() {
         let sleep = sleepResult(verdict: .good, composite: 74,
                                 axes: [(.fragmentation, 68), (.efficiency, 85), (.duration, 80)])
-        let r = card(action: .green, drivers: [driver("Sleep Quality", impact: 1, isNegative: true)], sleep: sleep)
+        let r = card(action: .green, drivers: [driver("Sleep Efficiency", impact: 1, isNegative: true)], sleep: sleep)
         let sub = r.driverDisplays().first!.subtitle
         XCTAssertTrue(sub.contains("efficiency"))
         XCTAssertFalse(sub.contains("Fragmented"))
@@ -679,7 +794,7 @@ final class ReadinessEngineTests: XCTestCase {
     func testCompositeAgreementRefinesEfficiencyWording() {
         let sleep = sleepResult(verdict: .good, composite: 72,
                                 axes: [(.efficiency, 66), (.fragmentation, 85), (.duration, 82)])
-        let r = card(action: .green, drivers: [driver("Sleep Quality", impact: 1, isNegative: true)], sleep: sleep)
+        let r = card(action: .green, drivers: [driver("Sleep Efficiency", impact: 1, isNegative: true)], sleep: sleep)
         let sub = r.driverDisplays().first!.subtitle
         XCTAssertTrue(sub.contains("efficiency"))
         XCTAssertFalse(sub.contains("Fragmented"))
@@ -687,7 +802,7 @@ final class ReadinessEngineTests: XCTestCase {
 
     // No composite yet (engine ran, sleep engine hasn't) → still efficiency-worded.
     func testSleepDriverNamesEfficiencyWhenCompositeAbsent() {
-        let r = card(action: .green, drivers: [driver("Sleep Quality", impact: 1, isNegative: true)], sleep: nil)
+        let r = card(action: .green, drivers: [driver("Sleep Efficiency", impact: 1, isNegative: true)], sleep: nil)
         let sub = r.driverDisplays().first!.subtitle
         XCTAssertTrue(sub.contains("efficiency"))
         XCTAssertFalse(sub.contains("Fragmented"))
@@ -728,11 +843,11 @@ final class ReadinessEngineTests: XCTestCase {
                                        (.architecture, 80), (.consistency, 78)])
         let r = card(action: .green,
                      drivers: [driver("HRV", impact: 1, isNegative: true),
-                               driver("Sleep Quality", impact: 1, isNegative: true)],
+                               driver("Sleep Efficiency", impact: 1, isNegative: true)],
                      sleep: sleep)
         let displays = r.driverDisplays()
         let hrv = displays.first { $0.label == "HRV" }!
-        let sq = displays.first { $0.label == "Sleep Quality" }!
+        let sq = displays.first { $0.label == "Sleep Efficiency" }!
 
         XCTAssertEqual(hrv.sentiment, .calm)
         XCTAssertFalse(hrv.subtitle.lowercased().contains("stress"))
@@ -740,5 +855,120 @@ final class ReadinessEngineTests: XCTestCase {
         XCTAssertFalse(sq.subtitle.contains("Fragmented"))
         XCTAssertNotNil(r.reconciliationLine)
         XCTAssertFalse(displays.contains { $0.sentiment == .warn })
+    }
+
+    // MARK: - Phase 2: gate-hold messaging regression (EXPECTED RED until Phase 3)
+    //
+    // Captures the shipped bug: on a raw-green day the hysteresis gate holds the DISPLAY
+    // at yellow, but `action` (and the copy derived from it) is driven off the gated
+    // `truth`, so the card claims "Multiple recovery signals are outside their normal
+    // range" while every recovery delta is favorable and every driver row is a green
+    // up-arrow. These assert the POST-FIX contract; they FAIL against current code.
+
+    private let yellowClusterClaim = "Multiple recovery signals are outside their normal range"
+
+    // A result mirroring the CURRENT engine output on a cold-start gate hold:
+    //   rawTruth green (recovery is fine) but displayed truth yellow (held for confirmation).
+    // `action == truth` here because the engine currently does `action = truth` — that
+    // coupling is exactly what Phase 3 fixes. Every delta is favorable-or-neutral; the
+    // drivers are all positive (green up-arrows).
+    private func gateHoldCard(drivers: [ReadinessDriver]) -> ReadinessResult {
+        var r = ReadinessResult.empty
+        r.rawTruth = .green
+        r.truth = .yellow
+        r.action = .yellow
+        r.drivers = drivers
+        r.rhrDelta = -3.9   // below baseline → favorable
+        r.hrvDelta = 1.4    // above baseline → favorable
+        r.sleepDelta = 1.1  // above target → favorable
+        r.rrDelta = -2.3    // below baseline → favorable
+        r.tempDelta = 0.0   // flat → neutral
+        r.effDelta = 0.02   // above baseline → favorable
+        return r
+    }
+
+    private func favorableDrivers() -> [ReadinessDriver] {
+        [driver("RHR", impact: 1, isNegative: false),
+         driver("Sleep", impact: 1, isNegative: false)]
+    }
+
+    private func clearVerdictLog() {
+        UserDefaults(suiteName: SharedStore.appGroupID)?
+            .removeObject(forKey: SharedStore.verdictLogKey)
+    }
+
+    // P2-1: no "outside their normal range" (or synonym) when every recovery delta is favorable.
+    func testGateHoldExplanationDoesNotClaimSignalsOutsideNormalWhenAllFavorable() {
+        let p = gateHoldCard(drivers: favorableDrivers()).presentation(manual: .default)
+        XCTAssertFalse(p.explanation.contains(yellowClusterClaim),
+            "Explanation must not claim recovery signals are outside normal range when every delta is favorable. Got: \(p.explanation)")
+        XCTAssertFalse(p.explanation.lowercased().contains("outside"),
+            "No 'outside normal range' synonym allowed on an all-favorable card. Got: \(p.explanation)")
+        XCTAssertFalse(p.explanation.lowercased().contains("below baseline"),
+            "No 'below baseline' claim allowed when all deltas are favorable. Got: \(p.explanation)")
+    }
+
+    // P2-2: a positive (green up-arrow) driver row must not sit under a caution headline.
+    func testGateHoldPositiveDriverRowsDoNotContradictHeadline() {
+        let r = gateHoldCard(drivers: favorableDrivers())
+        let p = r.presentation(manual: .default)
+        let displays = r.driverDisplays()
+        XCTAssertTrue(displays.contains { $0.sentiment == .positive },
+            "Fixture must have at least one positive driver row")
+        let cautionHeadline = p.headline.lowercased().contains("guardrails")
+            || p.subline.lowercased().contains("reduce effort")
+        XCTAssertFalse(cautionHeadline && displays.contains { $0.sentiment == .positive },
+            "A positive (green up-arrow) driver row must not sit under a caution headline. headline=\(p.headline) subline=\(p.subline)")
+    }
+
+    // P2-3: the count==0 Yellow must NOT route to .yellowCluster copy
+    // (the `count==1 ? isolated : cluster` ternary misroutes zero-negative-driver Yellows).
+    func testZeroNegativeDriverYellowDoesNotRouteToClusterCopy() {
+        var r = ReadinessResult.empty
+        r.rawTruth = .yellow
+        r.truth = .yellow
+        r.action = .yellow
+        r.drivers = []   // count == 0 negatives
+        let p = r.presentation(manual: .default)
+        XCTAssertFalse(p.explanation.contains(yellowClusterClaim),
+            "A zero-negative-driver Yellow must not route to the .yellowCluster 'multiple signals' copy. Got: \(p.explanation)")
+    }
+
+    // P2-4: on rawTruth==green && truth==yellow the explanation must confirm, not caution.
+    func testGateHoldExplanationIsConfirmNotCaution() {
+        let p = gateHoldCard(drivers: favorableDrivers()).presentation(manual: .default)
+        XCTAssertTrue(p.explanation.lowercased().contains("confirm"),
+            "On a rawTruth==green/truth==yellow hold the explanation must confirm recovery looks good, not caution. Got: \(p.explanation)")
+        XCTAssertFalse(p.explanation.contains(yellowClusterClaim),
+            "Hold explanation must not be the caution cluster string. Got: \(p.explanation)")
+        XCTAssertFalse(p.explanation.lowercased().contains("guardrails"),
+            "Hold explanation must not read as guardrails caution. Got: \(p.explanation)")
+    }
+
+    // P2-5: the engine strings WatchRootView reads directly (NOT via presentation()) must
+    // narrate the amber-badge/green-action split, not stay bare yellow caution / bare green.
+    func testGateHoldEngineMessageNarratesSplitNotBareGreenOrCaution() {
+        clearVerdictLog()
+        // Strong-green recovery day; with an empty verdict log yesterday is absent, so the
+        // cold-start hysteresis hold fires: rawTruth green, displayed truth yellow.
+        let result = eval(history(today: point(day: 28, rhr: 59, hrv: 36, sleep: 9.0, inBed: 9.5, rr: 13.5)))
+        XCTAssertEqual(result.rawTruth, .green, "Favorable recovery must be raw green")
+        XCTAssertEqual(result.truth, .yellow, "Empty verdict log → cold-start hold → displayed yellow")
+        XCTAssertTrue(result.actionMessage.lowercased().contains("confirm"),
+            "Engine actionMessage (read directly by WatchRootView) must narrate the confirm/hold on a raw-green day. Got: \(result.actionMessage)")
+        XCTAssertFalse(result.actionMessage.contains("avoid top-end effort"),
+            "Must not emit the bare yellow guardrails message when rawTruth is green. Got: \(result.actionMessage)")
+    }
+
+    // P2-6: when action derives green under an amber truth badge, the engine title must
+    // reference the hold — assert on the actual engine string, not the card path.
+    func testGateHoldEngineTitleReferencesHold() {
+        clearVerdictLog()
+        let result = eval(history(today: point(day: 28, rhr: 59, hrv: 36, sleep: 9.0, inBed: 9.5, rr: 13.5)))
+        XCTAssertEqual(result.rawTruth, .green)
+        XCTAssertEqual(result.truth, .yellow)
+        let title = result.actionTitle.lowercased()
+        XCTAssertTrue(title.contains("confirm") || title.contains("clear"),
+            "Engine actionTitle must reference confirming/clearing the hold rather than a bare verdict. Got: \(result.actionTitle)")
     }
 }

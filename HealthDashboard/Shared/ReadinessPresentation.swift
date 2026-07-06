@@ -14,6 +14,8 @@ enum ReadinessMessageState {
     case greenNoPush
     case yellowIsolated
     case yellowCluster
+    case yellowLoad     // yellow with zero negative recovery drivers → load-driven caution
+    case gateHold       // rawTruth green, display held amber for one-day confirmation
     case red
     case sick
     case highPain
@@ -25,7 +27,7 @@ extension ReadinessResult {
         switch driver.label {
         case "RHR", "Wrist Temp", "Respiratory Rate", "Pain", "Sick":
             return "\(driver.label) ↑"
-        case "HRV", "Sleep", "Sleep Quality", "SpO2":
+        case "HRV", "Sleep", "Sleep Efficiency", "SpO2":
             return "\(driver.label) ↓"
         default:
             return driver.label
@@ -60,6 +62,17 @@ extension ReadinessResult {
             }
             return "Several recovery signals off"
 
+        case .yellowLoad:
+            // No negative recovery drivers — the caution is load, not recovery.
+            return "Elevated training load"
+
+        case .gateHold:
+            // Raw verdict is green; any drivers present are soft, non-verdict-moving.
+            if negatives.isEmpty {
+                return "Recovery aligned"
+            }
+            return "Minor watch item: \(negatives.prefix(2).map { driverDisplay($0) }.joined(separator: ", "))"
+
         case .red, .sick, .highPain:
             if !negatives.isEmpty {
                 return negatives.map { driverDisplay($0) }.joined(separator: ", ")
@@ -89,8 +102,21 @@ extension ReadinessResult {
                 return .red
             }
 
+            // Gate hold: raw verdict is green but the display is held amber for one-day
+            // confirmation. `action` reads green (see ReadinessEngine) while `truth` reads
+            // amber — narrate the split instead of a caution or a bare green.
+            if truth == .yellow && rawTruth == .green {
+                return .gateHold
+            }
+
             if action == .yellow {
-                return negativeDrivers.count == 1 ? .yellowIsolated : .yellowCluster
+                // count==0 is a load-driven yellow (no negative recovery drivers) — it must
+                // NOT fall into the recovery "cluster" copy the old ternary misrouted it to.
+                switch negativeDrivers.count {
+                case 0:  return .yellowLoad
+                case 1:  return .yellowIsolated
+                default: return .yellowCluster
+                }
             }
 
             if canPushKeyLift {
@@ -128,6 +154,20 @@ extension ReadinessResult {
             headline = "Train with guardrails"
             subline = "Reduce effort today"
             baseExplanation = "Multiple recovery signals are outside their normal range. Run a controlled session: no grinders, no intensifiers, no extra volume."
+            guidanceButtonTitle = "View training guidance"
+
+        case .yellowLoad:
+            headline = "Train with guardrails"
+            subline = ReadinessLoadCopy.subline
+            baseExplanation = ReadinessLoadCopy.explanation
+            guidanceButtonTitle = "View training guidance"
+
+        case .gateHold:
+            // Deferred to the engine's single-source hold copy so the card and the Watch
+            // (which reads actionTitle/actionMessage) narrate the split identically.
+            headline = ReadinessHoldCopy.title
+            subline = ReadinessHoldCopy.subline
+            baseExplanation = ReadinessHoldCopy.message
             guidanceButtonTitle = "View training guidance"
 
         case .yellowIsolated:
@@ -186,7 +226,7 @@ extension ReadinessResult {
             return "HRV is down without a broader recovery collapse. Train with guardrails and avoid pushing."
         case "RHR":
             return "Resting heart rate is elevated while other signals are mostly stable. Use caution today."
-        case "Sleep", "Sleep Quality":
+        case "Sleep", "Sleep Efficiency":
             return "Sleep is compromised. Train if you feel okay, but keep effort controlled."
         case "SpO2":
             return "SpO2 is lower than usual, but this signal can be noisy. Watch for repeat patterns."
@@ -213,7 +253,7 @@ extension ReadinessResult {
             return "SpO2 is lower than usual, but this signal can be noisy. Watch for repeat patterns."
         case "RHR":
             return "Resting heart rate is mildly elevated, but the broader recovery picture is stable."
-        case "Sleep", "Sleep Quality":
+        case "Sleep", "Sleep Efficiency":
             return "Sleep is a little off, but the broader recovery picture is stable. Keep execution clean."
         default:
             return "One recovery signal is off, but the broader picture is stable. Train normally, but don’t chase hero sets."
@@ -249,15 +289,21 @@ extension ReadinessResult {
     private func driverSubtitle(for driver: ReadinessDriver, sentiment: DriverSentiment) -> String {
         switch driver.label {
         case "HRV":
+            if sentiment == .positive {
+                // Non-negative HRV driver (above baseline). Must not inherit the
+                // negative-dip fallthrough — that put a below-baseline string under
+                // the green up-arrow.
+                return "Above your baseline — good sign."
+            }
             if sentiment == .warn {
                 return driver.consecutiveDays >= 2
                     ? "Below baseline \(driver.consecutiveDays) days running — watch recovery."
                     : "Below baseline enough to weigh on today's read."
             }
-            // Clamped single-day dip that didn't move the verdict.
+            // .calm: clamped single-day dip that didn't move the verdict.
             return "Slightly below your baseline — within normal range."
 
-        case "Sleep Quality":
+        case "Sleep Efficiency":
             return sleepQualitySubtitle()
 
         default:
@@ -266,7 +312,7 @@ extension ReadinessResult {
         }
     }
 
-    // The "Sleep Quality" readiness driver fires off the ENGINE's sleepEffScore,
+    // The "Sleep Efficiency" readiness driver fires off the ENGINE's sleepEffScore,
     // which is an EFFICIENCY signal (asleep / inBed vs baseline). So this row is
     // always about efficiency — the subtitle is anchored there and never renamed
     // to another axis (the driver isn't those) nor suppressed to "close to your

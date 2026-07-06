@@ -466,6 +466,28 @@ struct DailyVerdictRecord: Codable, Equatable {
     }
 }
 
+// MARK: - Gate-hold / load-caution copy (single source across surfaces)
+//
+// Hysteresis "Option A" holds a raw-green day at an amber DISPLAY for one-day confirmation.
+// On such a day `action` reads green (recommendation) while `truth` reads amber (badge).
+// These strings narrate that split and are authored ONCE here so both the engine-baked
+// actionTitle/actionMessage (which WatchRootView reads directly) and the card presentation
+// render identical copy. Worded to read gracefully on a cold start (absent yesterday) too:
+// never implies recovery is provisional or suppressed when history is merely new.
+enum ReadinessHoldCopy {
+    static let title = "Recovery looks good — confirming"
+    static let subline = "Confirming before clearing"
+    static let message = "Recovery is green today. We’re confirming it with another day of data before clearing the badge to green — train normally and keep it clean, no extra cost or hero sets."
+}
+
+// Yellow driven purely by training/activity LOAD (no negative recovery drivers). Attributes
+// the caution to load, not to recovery signals — the count==0 case the old
+// `count==1 ? isolated : cluster` ternary used to misroute into the recovery-cluster copy.
+enum ReadinessLoadCopy {
+    static let subline = "Load is elevated"
+    static let explanation = "Recovery signals look fine — today’s training and activity load is what’s pulling readiness down. Run a controlled session and avoid stacking more cost on top."
+}
+
 struct ReadinessResult: Codable, Equatable {
     var truth: ReadinessStatus          // gated/displayed truth color
     var rawTruth: ReadinessStatus       // raw computed truth (before hysteresis gate)
