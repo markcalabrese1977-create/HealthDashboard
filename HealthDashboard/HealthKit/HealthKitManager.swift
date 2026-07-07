@@ -1159,6 +1159,131 @@ final class HealthKitManager {
             }
         }
 
+    // MARK: - Steady-state HR resolution (VO2max capture-first slice)
+    //
+    // The strap (HRM-600) reaches HealthKit THROUGH the Apple Watch during a Workout,
+    // so its samples are attributed to "Apple Watch", not Garmin — they can't be
+    // source-filtered to the strap. The only reliable discriminator is the workout
+    // boundary: inside a strap-paired workout the Watch uses the strap; outside it, the
+    // wrist sensor. So the capture path resolves HR from the overlapping HKWorkout, not
+    // a bare clock window. Provenance (source name, sample count, resolved interval) is
+    // returned so the log screen can show it before a point is written.
+
+    /// Floor below which a resolved pull is rejected as too sparse to trust. Tune later.
+    static let minSteadyStateHRSampleCount = 10
+
+    struct SteadyStateHRResult {
+        let averageBPM: Double
+        let sampleCount: Int
+        let resolvedInterval: DateInterval   // the window actually averaged (marked ∩ workout)
+        let workoutSourceName: String        // e.g. "Apple Watch" — shown for provenance
+        let workoutUUID: UUID                // uuid of the resolving workout — re-verification key
+    }
+
+    enum SteadyStateHRResolution {
+        case resolved(SteadyStateHRResult)
+        case noWorkout                          // no workout overlaps the marked window
+        case insufficientSamples(sampleCount: Int)
+    }
+
+    /// Resolves average HR for the marked `[start, end]` segment from the overlapping
+    /// workout (see the note above for why the workout boundary is the discriminator).
+    /// If several workouts overlap, the one with the largest overlap wins; HR is averaged
+    /// over the INTERSECTION of the marked window and that workout's bounds.
+    func resolveSteadyStateHR(from start: Date, to end: Date) async throws -> SteadyStateHRResolution {
+        let marked = DateInterval(start: min(start, end), end: max(start, end))
+
+        // 1–2. Workouts intersecting the marked segment; pick the largest overlap.
+        let candidates = try await workouts(intersecting: marked)
+        let best = candidates
+            .compactMap { w -> (workout: HKWorkout, overlap: TimeInterval)? in
+                let wi = DateInterval(start: w.startDate, end: w.endDate)
+                guard let inter = marked.intersection(with: wi), inter.duration > 0 else { return nil }
+                return (w, inter.duration)
+            }
+            .max { $0.overlap < $1.overlap }?
+            .workout
+
+        guard let workout = best else { return .noWorkout }
+
+        // 3. Average HR over the intersection of the marked window and the workout bounds.
+        let lo = max(marked.start, workout.startDate)
+        let hi = min(marked.end, workout.endDate)
+        guard hi > lo else { return .noWorkout }
+        let resolvedInterval = DateInterval(start: lo, end: hi)
+
+        guard let stats = try await heartRateStats(from: lo, to: hi) else {
+            return .insufficientSamples(sampleCount: 0)
+        }
+        guard stats.count >= Self.minSteadyStateHRSampleCount else {
+            return .insufficientSamples(sampleCount: stats.count)
+        }
+
+        // 4.
+        return .resolved(SteadyStateHRResult(
+            averageBPM: stats.average,
+            sampleCount: stats.count,
+            resolvedInterval: resolvedInterval,
+            workoutSourceName: workout.sourceRevision.source.name,
+            workoutUUID: workout.uuid
+        ))
+    }
+
+    /// Workouts whose interval overlaps `interval`. Queried across the spanning calendar
+    /// days (non-strict predicate) so a session that STARTED before the marked window is
+    /// still found, then filtered to genuine overlaps by the caller.
+    private func workouts(intersecting interval: DateInterval) async throws -> [HKWorkout] {
+        let cal = Calendar.current
+        let dayStart = cal.startOfDay(for: interval.start)
+        let dayEnd = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: interval.end)) ?? interval.end
+        // No strict options → HealthKit matches any workout whose interval overlaps [dayStart, dayEnd].
+        let predicate = HKQuery.predicateForSamples(withStart: dayStart, end: dayEnd, options: [])
+        let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
+        return try await withCheckedThrowingContinuation { cont in
+            let query = HKSampleQuery(
+                sampleType: HKObjectType.workoutType(),
+                predicate: predicate,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: [sort]
+            ) { _, samples, error in
+                if let error = error { cont.resume(throwing: error); return }
+                cont.resume(returning: (samples as? [HKWorkout]) ?? [])
+            }
+            self.store.execute(query)
+        }
+    }
+
+    // MARK: - Average HR over an arbitrary window (bare-window helper)
+    //
+    // Kept private and used internally by resolveSteadyStateHR (over the resolved
+    // marked ∩ workout interval). Mirrors fetchWorkoutHR's HKSampleQuery + unit idiom
+    // but takes dates and also returns the sample count for the sparsity gate.
+    private func heartRateStats(from start: Date, to end: Date) async throws -> (average: Double, count: Int)? {
+        guard let hrType = HKObjectType.quantityType(forIdentifier: .heartRate) else { return nil }
+        let predicate = HKQuery.predicateForSamples(
+            withStart: start,
+            end: end,
+            options: .strictStartDate
+        )
+        return try await withCheckedThrowingContinuation { cont in
+            let query = HKSampleQuery(
+                sampleType: hrType,
+                predicate: predicate,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: nil
+            ) { _, samples, error in
+                if let error = error { cont.resume(throwing: error); return }
+                let hrSamples = (samples as? [HKQuantitySample]) ?? []
+                guard !hrSamples.isEmpty else { cont.resume(returning: nil); return }
+                let unit = HKUnit.count().unitDivided(by: .minute())
+                let vals = hrSamples.map { $0.quantity.doubleValue(for: unit) }
+                let avg = vals.reduce(0, +) / Double(vals.count)
+                cont.resume(returning: (avg, vals.count))
+            }
+            self.store.execute(query)
+        }
+    }
+
     // MARK: - Sleep breakdown (Apple Watch only; noon->noon)
 
     private struct SleepDayBreakdown {

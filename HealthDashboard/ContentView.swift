@@ -818,6 +818,25 @@ struct ContentView: View {
                     }
 
                     DashboardCard(
+                        title: "Cardio Calibration",
+                        trailing: AnyView(
+                            NavigationLink {
+                                CardioCalibrationLogView()
+                            } label: {
+                                Label("Log", systemImage: "plus")
+                                    .font(.subheadline.weight(.semibold))
+                            }
+                        ),
+                        collapsible: true
+                    ) {
+                        ContentUnavailableView(
+                            "Log a steady-state segment",
+                            systemImage: "figure.run",
+                            description: Text("Capture speed, incline, and steady HR to build your VO₂ calibration set. Separate from daily readiness.")
+                        )
+                    }
+
+                    DashboardCard(
                         title: "Trends",
                         trailing: AnyView(
                             Button { Task { await backfill7Days() } } label: {
