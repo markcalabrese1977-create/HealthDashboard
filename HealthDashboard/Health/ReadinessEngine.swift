@@ -6,6 +6,20 @@ enum ReadinessEngine {
     private static var engineRunCount = 0
     #endif
 
+    // Shared guard-and-clamp computation used by evaluate() and HealthMetric.values(from:).
+    // Guards: both values present, meaningful magnitude, gap ≥ 5 min, gap ≤ 2 h.
+    // Returns nil when any guard fails; caller treats nil as "no data for this night."
+    static func efficiency(asleep: Double?, inBed: Double?) -> Double? {
+        guard let a = asleep, let b = inBed else { return nil }
+        guard a >= 3.0, b >= 4.0 else { return nil }
+        let minGapHours = 0.08   // ~5 minutes
+        guard b >= a + minGapHours else { return nil }
+        let maxGapHours = 2.0
+        guard (b - a) <= maxGapHours else { return nil }
+        let e = a / b
+        return max(0.0, min(1.2, e))
+    }
+
     static func evaluate(history: [DailyHealthPoint], manual: ManualReadinessInputs) -> ReadinessResult {
 
         #if DEBUG
@@ -87,24 +101,8 @@ enum ReadinessEngine {
         // Sleep target: simple and stable
         let sleepTarget = max(7.0, sleepBase ?? 7.0)
 
-        // Sleep efficiency baseline (proxy for fragmentation)
-        // Only consider nights with meaningful in-bed time.
-        func efficiency(asleep: Double?, inBed: Double?) -> Double? {
-            guard let a = asleep, let b = inBed else { return nil }
-            guard a >= 3.0, b >= 4.0 else { return nil }
-
-            let minGapHours = 0.08   // ~5 minutes
-            guard b >= a + minGapHours else { return nil }
-
-            let maxGapHours = 2.0
-            guard (b - a) <= maxGapHours else { return nil }
-
-            let e = a / b
-            return max(0.0, min(1.2, e))
-        }
-
         let effBase = median(
-            baselineSlice.compactMap { efficiency(asleep: $0.sleepHours, inBed: $0.sleepInBedHours) }
+            baselineSlice.compactMap { ReadinessEngine.efficiency(asleep: $0.sleepHours, inBed: $0.sleepInBedHours) }
         )
 
 
@@ -191,7 +189,7 @@ enum ReadinessEngine {
         // Retained as cluster flag input only.
         // Sleep efficiency score (quality proxy)
         // Goal: catch fragmented nights even when duration looks ok.
-        if let effCur = efficiency(asleep: today?.sleepHours, inBed: today?.sleepInBedHours),
+        if let effCur = ReadinessEngine.efficiency(asleep: today?.sleepHours, inBed: today?.sleepInBedHours),
            let base = effBase {
             let d = effCur - base
             // Keep this conservative: we only penalize obvious deterioration.
@@ -380,7 +378,7 @@ enum ReadinessEngine {
         }()
 
         let sleepEffLow: Bool = {
-            guard let effCur = efficiency(asleep: today?.sleepHours, inBed: today?.sleepInBedHours),
+            guard let effCur = ReadinessEngine.efficiency(asleep: today?.sleepHours, inBed: today?.sleepInBedHours),
                   let base = effBase else { return false }
 
             // Sleep efficiency is noisy. Only treat it as a cluster/push-blocking signal
@@ -588,7 +586,7 @@ enum ReadinessEngine {
         let rhrCur = today?.restingHR
         let sleepCur = today?.sleepHours
         let inBedCur = today?.sleepInBedHours
-        let effCur = efficiency(asleep: sleepCur, inBed: inBedCur)
+        let effCur = ReadinessEngine.efficiency(asleep: sleepCur, inBed: inBedCur)
         let tempCur = today?.wristTempDeltaC
         let spo2Cur = today?.spo2Pct
         let rrCur = today?.respiratoryRate
@@ -627,8 +625,10 @@ enum ReadinessEngine {
                     return pct * base
                 }()
 
+        let effCurForResult = ReadinessEngine.efficiency(asleep: today?.sleepHours, inBed: today?.sleepInBedHours)
+
         let effDeltaForResult: Double? = {
-                            guard let cur = efficiency(asleep: today?.sleepHours, inBed: today?.sleepInBedHours),
+                            guard let cur = effCurForResult,
                                   let base = effBase else { return nil }
                             return cur - base
                         }()
@@ -771,6 +771,8 @@ enum ReadinessEngine {
             tempDelta: tempDeltaAbs,
             rrDelta: rrDeltaAbs,
             effDelta: effDeltaForResult,
+            effCur: effCurForResult,
+            effBase: effBase,
             cardioLoad: cardioLoad,
             mechanicalLoad: mechanicalLoad,
             totalScore: total

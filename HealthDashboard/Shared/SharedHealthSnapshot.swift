@@ -515,6 +515,8 @@ struct ReadinessResult: Codable, Equatable {
     var tempDelta: Double?              // today - baseline °C
     var rrDelta: Double?                // today - baseline br/min
     var effDelta: Double?               // today - baseline efficiency (0–1 scale)
+    var effCur: Double?                 // today's engine efficiency (asleep/inBed, guarded, 0–1)
+    var effBase: Double?                // engine's 28-day baseline efficiency (0–1)
     var cardioLoad: Double              // TRIMP (Bannister formula)
     var mechanicalLoad: Double          // EP intensity-weighted volume (UserDefaults shared store)
     // Additive, display-only: the engine already computes this internally (recoveryScore +
@@ -550,6 +552,8 @@ extension ReadinessResult {
         tempDelta: nil,
         rrDelta: nil,
         effDelta: nil,
+        effCur: nil,
+        effBase: nil,
         cardioLoad: 0,
         mechanicalLoad: 0
     )

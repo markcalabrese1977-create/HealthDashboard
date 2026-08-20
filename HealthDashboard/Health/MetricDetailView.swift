@@ -9,6 +9,7 @@ enum HealthMetric: String, Identifiable {
     case wristTemp
     case respRate
     case sleepEff
+    case sleepEfficiency
     case spo2
     case trainingLoad
     case strengthLoad
@@ -22,8 +23,9 @@ enum HealthMetric: String, Identifiable {
         case .sleep:    return "Sleep"
         case .wristTemp: return "Wrist Temp"
         case .respRate: return "Resp Rate"
-        case .sleepEff: return "Sleep Quality"
-        case .spo2:         return "SpO2"
+        case .sleepEff:         return "Sleep Quality"
+        case .sleepEfficiency:  return "Sleep Efficiency"
+        case .spo2:             return "SpO2"
         case .trainingLoad: return "Training Load"
         case .strengthLoad: return "Strength Load"
         }
@@ -36,8 +38,9 @@ enum HealthMetric: String, Identifiable {
         case .sleep:    return "h"
         case .wristTemp: return "°C"
         case .respRate: return "br/min"
-        case .sleepEff: return ""
-        case .spo2:         return "%"
+        case .sleepEff:         return ""
+        case .sleepEfficiency:  return "%"
+        case .spo2:             return "%"
         case .trainingLoad: return ""
         case .strengthLoad: return ""
         }
@@ -50,8 +53,9 @@ enum HealthMetric: String, Identifiable {
         case .sleep:    return "bed.double.fill"
         case .wristTemp: return "thermometer"
         case .respRate: return "lungs.fill"
-        case .sleepEff: return "bed.double.fill"
-        case .spo2:         return "drop.fill"
+        case .sleepEff:         return "bed.double.fill"
+        case .sleepEfficiency:  return "bed.double.fill"
+        case .spo2:             return "drop.fill"
         case .trainingLoad: return "bolt.heart.fill"
         case .strengthLoad: return "dumbbell.fill"
         }
@@ -61,7 +65,7 @@ enum HealthMetric: String, Identifiable {
         switch self {
         case .rhr, .wristTemp, .respRate: return false
         case .trainingLoad, .strengthLoad: return false
-        default: return true
+        case .hrv, .sleep, .sleepEff, .sleepEfficiency, .spo2: return true
         }
     }
 
@@ -79,6 +83,8 @@ enum HealthMetric: String, Identifiable {
             return "Breathing rate during sleep is a sensitive early warning signal. Elevated respiratory rate — even 1–2 br/min above your baseline — often appears 1–2 days before other illness symptoms become obvious. It also rises with significant training load."
         case .sleepEff:
             return "Sleep Quality is a 0–100 composite of sleep architecture (deep/REM/core vs your baseline), duration against a dynamic need, efficiency (latency + wake-after-onset), fragmentation (discrete awakenings), and schedule consistency. Each night is scored against an expanding baseline of your prior nights; the 28-day chart is the composite over time."
+        case .sleepEfficiency:
+            return "Sleep efficiency measures how much of your time in bed was actually spent asleep (asleep ÷ in-bed, minimum 5-minute gap required). A lower value than your 28-day norm flags fragmented nights or trouble falling asleep. It is a supporting recovery signal — noisy on its own, meaningful in combination with HRV and RHR trends."
         case .spo2:
             return "Blood oxygen saturation measures how well your lungs are oxygenating your blood during sleep. Values consistently below your personal baseline may indicate breathing disruptions during sleep."
         case .trainingLoad:
@@ -99,6 +105,8 @@ enum HealthMetric: String, Identifiable {
             case .sleepEff:
                 // Composite series (Phase 6 precondition): the persisted per-night score.
                 return point.sleepCompositeScore
+            case .sleepEfficiency:
+                return ReadinessEngine.efficiency(asleep: point.sleepHours, inBed: point.sleepInBedHours)
             case .spo2:         return point.spo2Pct
             case .trainingLoad:  return point.dailyTrimp
             case .strengthLoad:  return point.mechanicalLoad
@@ -116,8 +124,9 @@ enum HealthMetric: String, Identifiable {
             return "\(h)h \(m)m"
         case .wristTemp: return String(format: "%+.1f °C", v)
         case .respRate: return String(format: "%.1f br/min", v)
-        case .sleepEff: return "\(Int(v.rounded()))"
-        case .spo2:         return "\(Int(v.rounded()))%"
+        case .sleepEff:         return "\(Int(v.rounded()))"
+        case .sleepEfficiency:  return "\(Int((v * 100).rounded()))%"
+        case .spo2:             return "\(Int(v.rounded()))%"
         case .trainingLoad:  return "\(Int(v.rounded()))"
         case .strengthLoad:  return v >= 1000 ? String(format: "%.1fK", v / 1000) : "\(Int(v.rounded()))"
         }
@@ -178,6 +187,11 @@ struct MetricDetailView: View {
             context = "\(metric.title) is within normal variation of your baseline (\(metric.formatValue(b))). No action needed."
         } else if favorable {
             context = "\(metric.title) is \(String(format: "%.0f", pct))% \(direction) your baseline of \(metric.formatValue(b)). This is a positive recovery signal."
+        } else if metric == .strengthLoad {
+            // Strength Load (mechanicalLoad) is NOT an input to the readiness score — it
+            // feeds sleep-quality strain and training-stress trends only. TRIMP (Training
+            // Load) does feed readiness via loadMod; mechanicalLoad does not. Don't overclaim.
+            context = "\(metric.title) is \(String(format: "%.0f", pct))% \(direction) your baseline of \(metric.formatValue(b)). This adds to your training-stress trend and sleep-quality strain, but it does not currently factor into the readiness score."
         } else {
             context = "\(metric.title) is \(String(format: "%.0f", pct))% \(direction) your baseline of \(metric.formatValue(b)). This is contributing to today's readiness score."
         }
@@ -205,6 +219,34 @@ struct MetricDetailView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .padding(.top, 4)
+                } else if metric == .sleepEfficiency {
+                    // Efficiency hero: values sourced from the engine (same computation the
+                    // detractor fired on) — not re-derived from history so the tile's norm
+                    // always matches the value that set the readiness flag.
+                    VStack(alignment: .leading, spacing: 4) {
+                        if let cur = readiness.effCur {
+                            Text("\(Int((cur * 100).rounded()))%")
+                                .font(.system(size: 48, weight: .bold, design: .rounded))
+                            if let base = readiness.effBase, let delta = readiness.effDelta {
+                                let sign = delta >= 0 ? "+" : ""
+                                Text("\(sign)\(String(format: "%.0f", delta * 100)) pp vs \(Int((base * 100).rounded()))% norm")
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(delta >= -0.04 ? Color.secondary : Color.orange)
+                            } else if let base = readiness.effBase {
+                                Text("Norm: \(Int((base * 100).rounded()))%")
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else {
+                            Text("--")
+                                .font(.system(size: 48, weight: .bold, design: .rounded))
+                                .foregroundStyle(.secondary)
+                            Text("Efficiency unavailable last night")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.top, 4)
                 } else {
                 VStack(alignment: .leading, spacing: 4) {
                     if let t = todayValue {
@@ -221,6 +263,8 @@ struct MetricDetailView: View {
                                     return "\(sign)\(h)h \(m)m vs baseline"
                                 case .sleepEff:
                                     return "\(sign)\(String(format: "%.0f", d)) vs baseline"
+                                case .sleepEfficiency:
+                                    return "\(sign)\(String(format: "%.0f", d * 100)) pp vs norm"
                                 case .trainingLoad:
                                     return "\(sign)\(Int(abs(d).rounded())) pts vs baseline"
                                 case .strengthLoad:

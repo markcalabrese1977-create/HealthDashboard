@@ -613,7 +613,7 @@ struct ContentView: View {
                                                                     delta: readiness.effDelta.map { $0 * 100 },
                                                                     deltaUnit: "%",
                                                                     higherIsBetter: true,
-                                                                    metric: .sleepEff,
+                                                                    metric: .sleepEfficiency,
                                                                     history: history,
                                                                     readiness: readiness,
                                                                     onTap: { selectedMetric = $0 }
@@ -1424,12 +1424,13 @@ fileprivate struct BodyRow: View {
     }
 }
 
-fileprivate func healthMetric(forDriverLabel label: String) -> HealthMetric? {
+// internal (not fileprivate) so driver-label → detail-view routing is unit-testable.
+func healthMetric(forDriverLabel label: String) -> HealthMetric? {
     switch label {
     case "RHR":               return .rhr
     case "HRV":                return .hrv
     case "Sleep":              return .sleep
-    case "Sleep Quality":      return .sleepEff
+    case "Sleep Efficiency":   return .sleepEfficiency
     case "Respiratory Rate":  return .respRate
     case "Wrist Temp":         return .wristTemp
     case "SpO2":                return .spo2

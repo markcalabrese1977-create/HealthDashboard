@@ -702,6 +702,23 @@ final class ReadinessEngineTests: XCTestCase {
         XCTAssertEqual(sleep.verdict, .excellent)
     }
 
+    // Driver row must route to the efficiency-native detail, not the composite tile.
+    func testSleepEfficiencyDriverRoutesToSleepEffDetail() {
+        XCTAssertEqual(healthMetric(forDriverLabel: "Sleep Efficiency"), .sleepEfficiency)
+        // Composite label is not a driver label — no route from it.
+        XCTAssertNil(healthMetric(forDriverLabel: "Sleep Quality"))
+    }
+
+    // Pin the new case's title and confirm .sleepEff title is unchanged.
+    func testSleepEfficiencyTitlesDistinct() {
+        XCTAssertEqual(HealthMetric.sleepEfficiency.title, "Sleep Efficiency",
+                       ".sleepEfficiency.title must be 'Sleep Efficiency'")
+        XCTAssertEqual(HealthMetric.sleepEff.title, "Sleep Quality",
+                       ".sleepEff.title must stay 'Sleep Quality' (composite tile unchanged)")
+        XCTAssertNotEqual(HealthMetric.sleepEfficiency.title, HealthMetric.sleepEff.title,
+                          "The two sleep metric cases must have distinct titles")
+    }
+
     // Label-matches-axis ------------------------------------------------------------
 
     func testSleepLabelNamesEfficiencyNotFragmentation() {
