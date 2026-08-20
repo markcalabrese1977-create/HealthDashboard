@@ -1026,6 +1026,7 @@ struct ContentView: View {
             // purely for logging, doubling the "load() called N times per launch" count
             // for no functional reason since reloadTimelines doesn't change the stored data.
             SharedStore.debugDump(tag: "AFTER Backfill 7 Days")
+            SharedStore.dumpVerdictLog()
 
         } catch {
             await MainActor.run {

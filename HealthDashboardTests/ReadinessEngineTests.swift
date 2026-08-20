@@ -939,4 +939,55 @@ final class ReadinessEngineTests: XCTestCase {
         XCTAssertTrue(title.contains("confirm") || title.contains("clear"),
             "Engine actionTitle must reference confirming/clearing the hold rather than a bare verdict. Got: \(result.actionTitle)")
     }
+
+    // MARK: - Load-origin gate-skip regression tests
+
+    // Helper: ISO string for yesterday using the same Calendar.current path the engine uses.
+    private func yesterdayISO() -> String {
+        let cal = Calendar.current
+        let yesterday = cal.date(byAdding: .day, value: -1, to: Date()) ?? Date()
+        let comps = cal.dateComponents([.year, .month, .day], from: yesterday)
+        return String(format: "%04d-%02d-%02d",
+                      comps.year ?? 1970, comps.month ?? 1, comps.day ?? 1)
+    }
+
+    // G-1: Yesterday was yellow due to load alone (rawRecoveryTruth == .green).
+    // The gate must recognise the load-origin and skip the hold → displayed truth green.
+    func testLoadOriginYellowSkipsHoldShowsGreen() {
+        clearVerdictLog()
+        SharedStore.appendVerdictLog(
+            DailyVerdictRecord(
+                dateISO: yesterdayISO(),
+                rawTotal: -2,        // load dragged total below yellow cutoff
+                rawRecovery: 2,      // recovery alone was positive
+                rawTruth: .yellow,
+                rawRecoveryTruth: .green   // load-origin: recovery-stripped verdict was green
+            )
+        )
+        let result = eval(history(today: point(day: 28, rhr: 59, hrv: 36, sleep: 9.0, inBed: 9.5, rr: 13.5)))
+        XCTAssertEqual(result.rawTruth, .green,
+            "Favorable recovery signals must produce rawTruth green. Got: \(result.rawTruth)")
+        XCTAssertEqual(result.truth, .green,
+            "Load-origin yesterday yellow must not trigger hold; gate should skip and display green. Got: \(result.truth)")
+    }
+
+    // G-2: Yesterday was yellow due to recovery signals (rawRecoveryTruth == .yellow).
+    // The gate must preserve the one-day confirmation hold → displayed truth yellow.
+    func testRecoveryOriginYellowKeepsHold() {
+        clearVerdictLog()
+        SharedStore.appendVerdictLog(
+            DailyVerdictRecord(
+                dateISO: yesterdayISO(),
+                rawTotal: -5,        // recovery signals drove the yellow
+                rawRecovery: -5,
+                rawTruth: .yellow,
+                rawRecoveryTruth: .yellow   // recovery-origin: stripped verdict also yellow
+            )
+        )
+        let result = eval(history(today: point(day: 28, rhr: 59, hrv: 36, sleep: 9.0, inBed: 9.5, rr: 13.5)))
+        XCTAssertEqual(result.rawTruth, .green,
+            "Favorable recovery signals must produce rawTruth green. Got: \(result.rawTruth)")
+        XCTAssertEqual(result.truth, .yellow,
+            "Recovery-origin yesterday yellow must keep the confirmation hold; displayed truth must stay yellow. Got: \(result.truth)")
+    }
 }

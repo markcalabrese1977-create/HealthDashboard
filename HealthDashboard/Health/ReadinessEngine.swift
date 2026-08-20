@@ -421,20 +421,29 @@ enum ReadinessEngine {
 
         // Keep your preference: do not Yellow from one moderate negative.
         let yellowTotalCutoff = -4
-        let redTotalCutoff = -7 
+        let redTotalCutoff = -7
 
-        var truth: ReadinessStatus
-        if total <= redTotalCutoff {
-            truth = .red
-        } else if clusterCount >= 2 || total <= yellowTotalCutoff {
-            truth = .yellow
-        } else {
-            truth = .green
+        // Shared verdict logic: thresholds, cluster count, and force rules are identical
+        // whether load is included or excluded. Called twice — once with total (full verdict)
+        // and once with recoveryScore alone (load-stripped verdict for gate-origin detection).
+        func verdictFor(_ score: Int) -> ReadinessStatus {
+            var v: ReadinessStatus
+            if score <= redTotalCutoff {
+                v = .red
+            } else if clusterCount >= 2 || score <= yellowTotalCutoff {
+                v = .yellow
+            } else {
+                v = .green
+            }
+            if forceRed { v = .red }
+            else if forceYellow, v != .red { v = .yellow }
+            return v
         }
 
-        // Overrides stay authoritative
-        if forceRed { truth = .red }
-        else if forceYellow, truth != .red { truth = .yellow }
+        var truth = verdictFor(total)
+        // Load-stripped verdict: same rules, loadMod excluded. Stored in the log so the
+        // hysteresis gate can distinguish a load-origin yellow from a recovery-driven one.
+        let rawRecoveryTruth = verdictFor(recoveryScore)
 
         // MARK: - Hysteresis gate (Option A: consecutive-day confirmation for Yellow→Green)
         // Raw computed verdict is stored to the log unconditionally every run.
@@ -467,7 +476,8 @@ enum ReadinessEngine {
                 tempUp03: tempUp03,
                 rrUp10: rrUp10,
                 sleepEffLow: sleepEffLow,
-                sick: sickFlag
+                sick: sickFlag,
+                rawRecoveryTruth: rawRecoveryTruth
             )
         )
 
@@ -484,16 +494,32 @@ enum ReadinessEngine {
 
             let yesterdayRecord = log_.first(where: { $0.dateISO == yesterdayISO })
 
-            if yesterdayRecord?.rawTruth != .green {
-                // Yesterday was Yellow or Red (or absent — first-run, treat as unconfirmed).
-                // Hold at Yellow for one more day.
+            if let yesterday = yesterdayRecord {
+                let yWasYellow = yesterday.rawTruth != .green
+                let yWasLoadOrigin = yesterday.rawRecoveryTruth == .green
+
+                if yWasYellow && !yWasLoadOrigin {
+                    // Recovery-driven yellow: keep 1-day confirmation hold.
+                    truth = .yellow
+                    #if DEBUG
+                    print("🔒 Hysteresis gate: raw=green, yesterday=\(yesterday.rawTruth.rawValue) origin=recovery → displayed=yellow (unconfirmed)")
+                    #endif
+                } else if yWasYellow && yWasLoadOrigin {
+                    // Load-origin yellow: recovery was already clean; nothing to confirm.
+                    #if DEBUG
+                    print("🔓 Hysteresis gate: raw=green, yesterday=yellow (load-origin) → displayed=green (no hold)")
+                    #endif
+                } else {
+                    // Yesterday was green.
+                    #if DEBUG
+                    print("✅ Hysteresis gate: raw=green, yesterday=green → displayed=green (confirmed)")
+                    #endif
+                }
+            } else {
+                // Absent: first-run or no history — treat as unconfirmed, keep hold.
                 truth = .yellow
                 #if DEBUG
-                print("🔒 Hysteresis gate: raw=green, yesterday=\(yesterdayRecord?.rawTruth.rawValue ?? "nil") → displayed=yellow (unconfirmed)")
-                #endif
-            } else {
-                #if DEBUG
-                print("✅ Hysteresis gate: raw=green, yesterday=green → displayed=green (confirmed)")
+                print("🔒 Hysteresis gate: raw=green, yesterday=nil (first-run) → displayed=yellow (unconfirmed)")
                 #endif
             }
         }
@@ -591,7 +617,7 @@ enum ReadinessEngine {
         print("  Scores:  HRV(raw)=\(hrvScore) HRV(adj)=\(adjustedHRVScore) buffered=\(hrvBufferedByStrongRecovery) RHR=\(rhrScore) Sleep=\(sleepScore) Eff=\(sleepEffScore) RR=\(rrScore) Temp=\(tempScore) SpO2=\(spo2Score) pain=\(painScore) sick=\(sickScore) recovery=\(recoveryScore) load=\(loadMod) total=\(total)")
         print("  Cluster: hrvDown10=\(hrvDown10) hrvTrend=\(hrvDownTrend) hrvConcern=\(hrvConcern) rhrUp3=\(rhrUp3) sleepShort1=\(sleepShort1) sleepEffLow=\(sleepEffLow) rrUp10=\(rrUp10) tempUp03=\(tempUp03) sick=\(sickFlag) count=\(clusterCount) forceY=\(forceYellow) forceR=\(forceRed)")
         print("  Convergence: bonus=\(convergenceBonus) clusterCount=\(clusterCount)")
-        print("  Output:  truth=\(truth.title) action=\(action.title) canPush=\(canPushKeyLift)")
+        print("  Output:  truth=\(truth.title) rawRecoveryTruth=\(rawRecoveryTruth.title) action=\(action.title) canPush=\(canPushKeyLift)")
         #endif
 
         

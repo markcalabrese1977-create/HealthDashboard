@@ -411,6 +411,12 @@ struct DailyVerdictRecord: Codable, Equatable {
     let sleepEffLow: Bool
     let sick: Bool
 
+    // Load-stripped verdict: the ReadinessStatus that would result from recovery signals
+    // alone (loadMod = 0), using identical thresholds, cluster count, and force rules.
+    // Forward-only: old records decode absent key → rawTruth (conservative: disables the
+    // load-origin gate-skip for those days, matching the old no-skip behavior).
+    let rawRecoveryTruth: ReadinessStatus
+
     init(
         dateISO: String,
         rawTotal: Int,
@@ -424,7 +430,8 @@ struct DailyVerdictRecord: Codable, Equatable {
         tempUp03: Bool = false,
         rrUp10: Bool = false,
         sleepEffLow: Bool = false,
-        sick: Bool = false
+        sick: Bool = false,
+        rawRecoveryTruth: ReadinessStatus
     ) {
         self.dateISO = dateISO
         self.rawTotal = rawTotal
@@ -439,11 +446,13 @@ struct DailyVerdictRecord: Codable, Equatable {
         self.rrUp10 = rrUp10
         self.sleepEffLow = sleepEffLow
         self.sick = sick
+        self.rawRecoveryTruth = rawRecoveryTruth
     }
 
     private enum CodingKeys: String, CodingKey {
         case dateISO, rawTotal, rawRecovery, rawTruth
         case hrvDown10, hrvDownTrend, hrvConcern, rhrUp4, sleepShort1, tempUp03, rrUp10, sleepEffLow, sick
+        case rawRecoveryTruth
     }
 
     init(from decoder: Decoder) throws {
@@ -463,6 +472,8 @@ struct DailyVerdictRecord: Codable, Equatable {
         rrUp10 = try c.decodeIfPresent(Bool.self, forKey: .rrUp10) ?? false
         sleepEffLow = try c.decodeIfPresent(Bool.self, forKey: .sleepEffLow) ?? false
         sick = try c.decodeIfPresent(Bool.self, forKey: .sick) ?? false
+        // Old records default to rawTruth → gate-skip stays disabled for those days.
+        rawRecoveryTruth = try c.decodeIfPresent(ReadinessStatus.self, forKey: .rawRecoveryTruth) ?? rawTruth
     }
 }
 
@@ -873,6 +884,32 @@ enum SharedStore {
 
         log("📥 load(verdictLog) -> count=\(decoded.count) last=\(decoded.last?.dateISO ?? "nil")")
         return decoded
+    }
+
+    /// Prints a human-readable summary of the persisted verdict log to the console.
+    /// Read-only: calls only loadVerdictLog(), touches no stored state.
+    static func dumpVerdictLog() {
+        let entries = loadVerdictLog()
+        let first = entries.first?.dateISO ?? "—"
+        let last  = entries.last?.dateISO  ?? "—"
+        log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        log("📋 VERDICT LOG — count=\(entries.count) range=\(first)…\(last)")
+        for e in entries {
+            var flags: [String] = []
+            if e.hrvDown10    { flags.append("hrvDown10") }
+            if e.hrvDownTrend { flags.append("hrvDownTrend") }
+            if e.hrvConcern   { flags.append("hrvConcern") }
+            if e.rhrUp4       { flags.append("rhrUp4") }
+            if e.sleepShort1  { flags.append("sleepShort1") }
+            if e.tempUp03     { flags.append("tempUp03") }
+            if e.rrUp10       { flags.append("rrUp10") }
+            if e.sleepEffLow  { flags.append("sleepEffLow") }
+            if e.sick         { flags.append("sick") }
+            let flagStr   = flags.isEmpty ? "—" : flags.joined(separator: ",")
+            let recovStr  = e.rawRecovery.map { String($0) } ?? "nil"
+            log("  \(e.dateISO) | \(e.rawTruth.rawValue) | total=\(e.rawTotal) | recovery=\(recovStr) | [\(flagStr)]")
+        }
+        log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     }
 
     /// Upserts today's record and trims the log to the most recent 30 days.
