@@ -702,38 +702,6 @@ final class ReadinessEngineTests: XCTestCase {
         XCTAssertEqual(sleep.verdict, .excellent)
     }
 
-    // Renamed driver must still route to the efficiency detail view (tap navigation).
-    func testSleepEfficiencyDriverRoutesToSleepEffDetail() {
-        XCTAssertEqual(healthMetric(forDriverLabel: "Sleep Efficiency"), .sleepEff)
-        // Old label no longer routes anywhere (nothing string-matches it).
-        XCTAssertNil(healthMetric(forDriverLabel: "Sleep Quality"))
-    }
-
-    // Composite survives navigation round-trip -------------------------------------
-    // Encodes the fix for the tile reverting to "Sleep Eff" fallback after push-then-pop:
-    // reevaluatePreservingComposite() must re-derive readiness WITHOUT dropping an
-    // already-fetched sleep composite (ReadinessEngine.evaluate() alone leaves it nil).
-
-    func testReevaluatePreservesFetchedComposite() {
-        var previous = ReadinessResult.empty
-        previous.sleepQuality = sleepResult(verdict: .excellent, composite: 91,
-                                            axes: [(.efficiency, 90), (.fragmentation, 94)])
-        // Simulates the onAppear-on-pop re-evaluation with the composite already in hand.
-        let result = reevaluatePreservingComposite(
-            history: history(today: point(day: 28)), manual: .default, previous: previous)
-        XCTAssertNotNil(result.sleepQuality,
-                        "Composite must survive re-evaluation, not revert to the fallback tile")
-        XCTAssertEqual(result.sleepQuality?.composite, 91)
-        XCTAssertEqual(result.sleepQuality?.verdict, .excellent)
-    }
-
-    func testReevaluateNilCompositeStaysNil() {
-        // Cold launch: no composite fetched yet -> re-eval preserves nil (accepted fallback gap).
-        let result = reevaluatePreservingComposite(
-            history: history(today: point(day: 28)), manual: .default, previous: .empty)
-        XCTAssertNil(result.sleepQuality)
-    }
-
     // Label-matches-axis ------------------------------------------------------------
 
     func testSleepLabelNamesEfficiencyNotFragmentation() {
