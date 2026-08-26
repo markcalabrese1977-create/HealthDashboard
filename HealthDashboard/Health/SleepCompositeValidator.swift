@@ -12,6 +12,13 @@ import Foundation
 
 enum SleepCompositeValidator {
 
+    static let minAxisAvailabilityFraction = 0.80   // axis is decision-grade at ≥80% of matured pairs
+
+    enum AxisNilReason {
+        case insufficientPairs   // ax_.count < 2 → pearson returned nil for n-floor reason
+        case zeroVariance        // ax_.count >= 2 but sxx == 0 → axis scores are constant, no signal
+    }
+
     struct Report {
         let n: Int                              // matured composite→readiness(D+1) pairs
         let rawR: Double?                       // composite(D) vs readiness(D+1) rawTotal
@@ -19,6 +26,8 @@ enum SleepCompositeValidator {
         let nRecovery: Int                      // pairs with a load-stripped recovery(D+1)
         let recoveryR: Double?                  // composite(D) vs recovery(D+1) — the clean target
         let perAxisR: [(axis: SleepAxis, r: Double?)]
+        let perAxisAvailability: [(axis: SleepAxis, availablePairs: Int)]
+        let isDecisionGrade: Bool
         let summary: String
     }
 
@@ -161,28 +170,76 @@ enum SleepCompositeValidator {
         let recoveryR = pearson(rx, ry)
 
         let axes: [SleepAxis] = [.architecture, .duration, .efficiency, .fragmentation, .consistency]
-        let perAxis: [(SleepAxis, Double?)] = axes.map { ax in
+        let totalMatured = x.count
+        // Parallel pass: correlation + availability count + nil-cause, without changing maturedAxisPairs.
+        // nilReason distinguishes "too few available pairs" from "axis scores are constant" — both
+        // collapse to pearson nil but require different banner copy and decision-grade treatment.
+        let perAxisResults: [(axis: SleepAxis, r: Double?, availablePairs: Int, nilReason: AxisNilReason?)] = axes.map { ax in
             let (ax_, ay_) = maturedAxisPairs(axis: ax, axisLog: axisLog, readinessByDate: readinessByDate)
-            return (ax, pearson(ax_, ay_))
+            let r = pearson(ax_, ay_)
+            let nilReason: AxisNilReason? = r == nil
+                ? (ax_.count >= 2 ? .zeroVariance : .insufficientPairs)
+                : nil
+            return (axis: ax, r: r, availablePairs: ax_.count, nilReason: nilReason)
         }
+
+        let minAvailPairs = Int((minAxisAvailabilityFraction * Double(totalMatured)).rounded(.up))
+        // An axis is decision-grade iff it has enough available pairs AND its correlation is a real
+        // number. available-but-constant (zeroVariance) carries no signal and is NOT decision-grade.
+        let isDecisionGrade = totalMatured >= 15
+            && perAxisResults.allSatisfy { $0.availablePairs >= minAvailPairs && $0.r != nil }
 
         // Off-by-one audit aid: the exact pairs, in order. n should equal this list length.
         let pairDates = maturedPairDates(axisLog: axisLog, readinessByDate: readinessByDate)
 
         func fmt(_ v: Double?) -> String { v.map { String(format: "%+.2f", $0) } ?? "n/a" }
-        var lines = ["🛌📈 SleepComposite validation — matured pairs n=\(x.count)"]
+        var lines: [String] = []
+
+        // Run status banner — first thing a reader sees.
+        let pct = Int(minAxisAvailabilityFraction * 100)
+        if isDecisionGrade {
+            lines.append("✅ DECISION-GRADE RUN — all axes available ≥\(pct)% of \(totalMatured) pairs.")
+        } else {
+            // An axis is degraded either because it had too few available pairs OR because it was
+            // available on enough pairs but its scores were constant (zero variance, r=n/a).
+            let degraded = perAxisResults.filter { $0.availablePairs < minAvailPairs || $0.r == nil }
+            lines.append("⚠️ DEGRADED RUN — NOT decision-grade. The following axes fell below the availability floor or had no signal and their correlations (and the composite that includes them) are unreliable this run:")
+            for d in degraded {
+                if d.nilReason == .zeroVariance {
+                    lines.append("     \(d.axis.title): available but constant (zero variance) — contributes no signal")
+                } else {
+                    lines.append("     \(d.axis.title): \(d.availablePairs)/\(totalMatured) available")
+                }
+            }
+            lines.append("  Composite partial-r and per-axis numbers below are computed on a reduced/degraded axis set. Do NOT use this run to decide the composite driver-swap or rework.")
+        }
+
+        lines.append("🛌📈 SleepComposite validation — matured pairs n=\(x.count)")
         lines.append("  pairs (D→D+1): " + pairDates.map { "\($0.d)→\($0.next)" }.joined(separator: ", "))
         if let last = pairDates.last {
             lines.append("  ⚠️ audit: newest pair D+1=\(last.next) — if that's TODAY, its readiness is still provisional; drop it until the day closes (this is the likely 'n one high').")
         }
         lines.append("  raw   composite(D) vs readiness(D+1): r=\(fmt(rawR))")
-        lines.append("  partial (control load(D), n=\(tx.count)): r=\(fmt(partialR))  ← the real test")
+        if isDecisionGrade {
+            lines.append("  partial (control load(D), n=\(tx.count)): r=\(fmt(partialR))  ← the real test")
+        } else {
+            lines.append("  DIAGNOSTIC ONLY (degraded run — not for decisions):")
+            lines.append("  partial (control load(D), n=\(tx.count)): r=\(fmt(partialR))")
+        }
         lines.append("  recovery-stripped composite(D) vs recovery(D+1) (n=\(rx.count)): r=\(fmt(recoveryR))")
         if x.count < 15 {
             lines.append("  ⚠️ n<15 — directional only, let it accrue before acting.")
         }
-        for (ax, axr) in perAxis {
-            lines.append("  · \(ax.title): r=\(fmt(axr))")
+        for r in perAxisResults {
+            let detail: String
+            if let rv = r.r {
+                detail = "r=\(fmt(rv))   (available \(r.availablePairs)/\(totalMatured))"
+            } else if r.nilReason == .zeroVariance {
+                detail = "r=n/a  (available \(r.availablePairs)/\(totalMatured) — ZERO VARIANCE, axis is constant, no signal)"
+            } else {
+                detail = "r=n/a  (available \(r.availablePairs)/\(totalMatured) — INSUFFICIENT, axis unavailable on most pairs)"
+            }
+            lines.append("  · \(r.axis.title): \(detail)")
         }
 
         return Report(
@@ -191,7 +248,9 @@ enum SleepCompositeValidator {
             partialR: partialR,
             nRecovery: rx.count,
             recoveryR: recoveryR,
-            perAxisR: perAxis,
+            perAxisR: perAxisResults.map { (axis: $0.axis, r: $0.r) },
+            perAxisAvailability: perAxisResults.map { (axis: $0.axis, availablePairs: $0.availablePairs) },
+            isDecisionGrade: isDecisionGrade,
             summary: lines.joined(separator: "\n")
         )
     }
