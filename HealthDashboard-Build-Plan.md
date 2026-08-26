@@ -153,10 +153,11 @@ Originally: on n ≥ 15 closure, swap the composite driver, cut the store over, 
 - **Status-into-verdict wiring** — Phase 2 status tuples feed the verdict.
 - **Dead HRV buffer fix** — the HRV buffer is unreachable behind a −1 floor clamp that precedes the buffer guard; fires every run. Confirmed via debug dumps.
 
-### ⛔ Composite driver swap: CONTRAINDICATED (2026-08-08)
+### ⛔ Composite driver swap: RETIRED (2026-08-26 — see resolution note below)
 
-Status: the sleep composite does NOT predict next-day readiness in the
-validation data. The driver swap is on hold pending rework, NOT ready to wire.
+Status: RETIRED — not deferred. The sleep composite does NOT predict next-day
+readiness in the validation data (three-run replication, partial r=+0.06). The
+driver swap will not be wired. See ✅ RESOLVED (2026-08-26) below.
 
 Evidence (SleepCompositeValidator run, 2026-08-08):
 - Matured pairs: n=22 (newest closed pair 2026-08-06→08-07). n≥15 hold
@@ -234,6 +235,63 @@ to the composite "Sleep Quality" tile, which shows composite score vs composite
 baseline and hides the efficiency axis) is being fixed SEPARATELY as a pure
 presentation fix — it does not depend on and must not wait for Q1/Q2.
 
+### ✅ RESOLVED (2026-08-26): Composite driver swap RETIRED — park as display
+
+Decision: the sleep composite will NOT drive the readiness verdict. The Phase 8
+driver swap is RETIRED (not deferred). The composite is kept as a descriptive
+display metric only (the "Sleep Quality" tile). ReadinessEngine.evaluate() will
+not consume the composite.
+
+Evidence — three independent validation runs, partial-r controlling for load(D):
+- 2026-08-08 (run 1): partial r = +0.06
+- 2026-08-08 (run 2, degraded — Consistency dropped): partial r = +0.06
+- 2026-08-26 (decision-grade, all axes available, honest validator): partial r = +0.06
+Replicated null at n=22 across three windows. |r| floor for significance at n=22
+(df=20) is ~0.42; +0.06 is indistinguishable from zero. The composite does not
+predict next-day readiness for this subject at achievable sample sizes.
+
+Per-axis, clean run (2026-08-26):
+- Architecture:  r = +0.26  ← lone positive, but does NOT clear the 0.42 floor
+- Duration:      r = +0.05  (noise)
+- Efficiency:    r = +0.09  (noise; last run's -0.35 was the load confound, now washed)
+- Fragmentation: r = -0.06  (noise)
+- Consistency:   inert — see below
+Four of five axes carry no signal; the one that leans positive (Architecture) is
+underpowered, not validated.
+
+Why not rework around Architecture-only: at n=22 Architecture's +0.26 does not clear
+significance. Building a single-axis Architecture driver now would be fitting noise
+that happens to lean positive across three windows — the overfitting trap. If ever
+revisited, the honest path is: collect many more matured pairs, THEN re-test
+Architecture alone. Not a wiring task now.
+
+Consistency finding (do NOT "fix"): Consistency scored zero-variance (constant 100)
+across all 22 pairs → r=n/a. Root cause is NOT a data gap — it's that this subject's
+14-night midpoint SD stays under 20 minutes every window (genuinely regular sleep).
+The score→bucket mapping (SD<20min → 100) correctly pinned it. Unclamping the mapping
+to make it "vary" would convert an honest no-signal into a spurious small correlation
+on near-constant data — worse, not better. Consistency is inert for THIS subject
+because the behavior it measures doesn't vary, not because the axis is broken. Leave
+the bucket as-is for validation; refine only for display if desired, never to
+manufacture a validation signal.
+
+Validator instrument note: today's run initially printed ✅ DECISION-GRADE despite
+Consistency being zero-variance — the availability-only check couldn't see an
+available-but-constant axis. Fixed 2026-08-26: an axis available on ≥80% of pairs but
+returning r=n/a from zero variance now flags the run degraded and names the cause
+(ZERO VARIANCE vs INSUFFICIENT). The instrument is now trustworthy for the eventual
+Architecture re-test, if ever run.
+
+Consequences:
+- Phase 8 driver swap: RETIRED. Phase 8 now = store cutover + status-into-verdict
+  wiring + dead HRV buffer fix. None depend on the composite.
+- The "🔬 Composite rework agenda" (Q1 efficiency operationalization, Q2 efficiency-as-
+  driver) is CLOSED: no composite axis drives the verdict, so the operationalization
+  and driver questions are moot. The sleep-efficiency detractor remains a ReadinessEngine
+  signal on its own terms (unchanged); the composite simply never enters the verdict.
+- The validation hold on ReadinessEngine.evaluate() that gated all of this is now
+  fully discharged — its purpose (decide the driver swap) is complete.
+
 ---
 
 ## Parked items / open-question ledger
@@ -245,6 +303,7 @@ presentation fix — it does not depend on and must not wait for Q1/Q2.
 - **VO2max** — real-capture HR check → push + PR; edit-window display-anchor fix.
 - **mechanicalLoad** — Step 4a frequency probe; double-write idempotent fix; durability/rehydration debt.
 - **Dead HRV buffer fix** — Phase 8.
+- **Post-restore data degradation (cross-cutting):** restored history is lossy/laggy for derived scalars (mechanical-load history wiped; sleep window-bounds/axis availability degraded for days after a restore). Any validation/scoring run on a post-restore window is suspect until the window clears. Validator now flags degraded runs; no general rehydration guarantee exists. Same disease as the mechanicalLoad durability gap.
 - **Phase 1 architecture sign-off** — canonical record shape + 3 identity keys; first brick of the trusted-store arc.
 - **`readiness-gate-hold-messaging` PR** — `git stash -u` + clean re-run, then open.
 
