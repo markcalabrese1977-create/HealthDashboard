@@ -190,7 +190,11 @@ final class ReadinessEngineTests: XCTestCase {
         XCTAssertNotEqual(result.action, .red)
     }
 
-    func testStrongRecoveryBuffersLowHRV() {
+    // Previously named testStrongRecoveryBuffersLowHRV. The dead buffer
+    // (hrvBufferedByStrongRecovery) was removed — it was unreachable because the -1 clamp
+    // at line 144 fired before the guard could see hrvScore == -2. The clamp is what bounds
+    // low HRV; this test's assertions hold for the same reason they always did.
+    func testLowHRVBoundedByClampWhenOtherSignalsStrong() {
         var hist = (1...24).map { point(day: $0, hrv: 30) }
         hist += [
             point(day: 25, hrv: 24), point(day: 26, hrv: 24),
@@ -201,6 +205,26 @@ final class ReadinessEngineTests: XCTestCase {
         XCTAssertNotEqual(result.truth, .red)
         XCTAssertTrue(result.truth == .green || result.truth == .yellow, "Expected green or yellow, got \(result.truth)")
         XCTAssertTrue(result.driverSummary.contains("HRV"), "Driver should include HRV")
+    }
+
+    // Pins that deleting the dead buffer (hrvBufferedByStrongRecovery) changed nothing:
+    // HRV in the raw -2 band (~-20% delta) with all other signals at baseline contributes
+    // exactly -1 to recoveryScore (the clamp floor), not -2. The buffer only ever targeted
+    // the -2 case, but the clamp prevented -2 from reaching the buffer. Removing both
+    // leaves behavior identical on all inputs.
+    func testHRVBufferRemovalIsNoOp() {
+        // 27 neutral baseline days (hrv=30) + today at hrv=24 → delta = -20%,
+        // which is in the (-0.30)...(-0.12) raw -2 band. All other signals at baseline
+        // so their scores are 0. This is the exact fixture the buffer was designed for.
+        let hist = history(today: point(day: 28, hrv: 24))
+        let result = eval(hist)
+        // Clamp produces -1, not -2. Driver impact must be 1, not 2.
+        let hrvDriver = result.drivers.first(where: { $0.label == "HRV" })
+        XCTAssertNotNil(hrvDriver, "HRV driver must be present when HRV is depressed")
+        XCTAssertEqual(hrvDriver?.impact, 1, "HRV impact must be 1 (clamped -1), not 2 (raw -2)")
+        XCTAssertTrue(hrvDriver?.isNegative == true)
+        // recoveryScore = -1; no cluster force → verdict must be green
+        XCTAssertEqual(result.rawTruth, .green)
     }
 
     func testHRVTrendPlusAnotherSignalForcesYellow() {

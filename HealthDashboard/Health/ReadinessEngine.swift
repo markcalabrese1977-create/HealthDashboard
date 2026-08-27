@@ -241,36 +241,12 @@ enum ReadinessEngine {
         let sickScore: Int = manual.isSick ? -4 : 0
         if manual.isSick { flags.append("Sick") }
 
-        let hrvBufferedByStrongRecovery: Bool = {
-            guard hrvScore == -2 else { return false }
-
-            let rhrStableOrGood = rhrScore >= 0
-            let sleepStrong = sleepScore >= 0
-            let sleepQualityGood = sleepEffScore >= 0
-            let rrStable = rrScore >= 0
-            let tempStable = tempScore >= 0
-            let noManualProblem = painScore == 0 && sickScore == 0
-
-            return rhrStableOrGood &&
-                   sleepStrong &&
-                   sleepQualityGood &&
-                   rrStable &&
-                   tempStable &&
-                   noManualProblem
-        }()
-
-        let adjustedHRVScore: Int = {
-            if hrvScore == -2 && hrvBufferedByStrongRecovery {
-                return -1
-            }
-
-            return hrvScore
-        }()
-
         // var: convergenceBonus (below, after clusterCount is known) mutates this
         // before `total` is assembled.
+        // hrvScore is already clamped to -1 at its computation site (line 144), so no
+        // secondary buffer is needed here — the clamp is the effective floor.
         var recoveryScore =
-            adjustedHRVScore + rhrScore + sleepScore + sleepEffScore + tempScore + spo2Score + rrScore
+            hrvScore + rhrScore + sleepScore + sleepEffScore + tempScore + spo2Score + rrScore
             + painScore + sickScore
 
         // MARK: - Load / Stress modifier (separate from recovery)
@@ -612,7 +588,7 @@ enum ReadinessEngine {
         print("  Today:   HRV=\(fmt(hrvCur)) RHR=\(fmt(rhrCur)) Sleep=\(fmt(sleepCur)) InBed=\(fmt(inBedCur)) Eff=\(fmt(effCur)) RR=\(fmt(rrCur)) Temp=\(fmt(tempCur)) SpO2=\(fmt(spo2Cur))")
         print("  Base:    HRV=\(fmt(hrvBase)) RHR=\(fmt(rhrBase)) SleepBase=\(fmt(sleepBase)) SleepTarget=\(String(format: "%.2f", sleepTarget)) EffBase=\(fmt(effBase)) RRBase=\(fmt(rrBase)) TempBase=\(fmt(tempBase)) SpO2=\(fmt(spo2Base))")
         print("  Δ:       HRV=\(fmtPct(hrvDeltaPct)) RHR=\(fmt(rhrDeltaAbs)) Sleep=\(fmt(sleepDeltaAbs)) Eff=\(fmt(effDeltaAbs)) RR=\(fmt(rrDeltaAbs)) Temp=\(fmt(tempDeltaAbs)) SpO2=\(fmt(spo2DeltaAbs))")
-        print("  Scores:  HRV(raw)=\(hrvScore) HRV(adj)=\(adjustedHRVScore) buffered=\(hrvBufferedByStrongRecovery) RHR=\(rhrScore) Sleep=\(sleepScore) Eff=\(sleepEffScore) RR=\(rrScore) Temp=\(tempScore) SpO2=\(spo2Score) pain=\(painScore) sick=\(sickScore) recovery=\(recoveryScore) load=\(loadMod) total=\(total)")
+        print("  Scores:  HRV=\(hrvScore) RHR=\(rhrScore) Sleep=\(sleepScore) Eff=\(sleepEffScore) RR=\(rrScore) Temp=\(tempScore) SpO2=\(spo2Score) pain=\(painScore) sick=\(sickScore) recovery=\(recoveryScore) load=\(loadMod) total=\(total)")
         print("  Cluster: hrvDown10=\(hrvDown10) hrvTrend=\(hrvDownTrend) hrvConcern=\(hrvConcern) rhrUp3=\(rhrUp3) sleepShort1=\(sleepShort1) sleepEffLow=\(sleepEffLow) rrUp10=\(rrUp10) tempUp03=\(tempUp03) sick=\(sickFlag) count=\(clusterCount) forceY=\(forceYellow) forceR=\(forceRed)")
         print("  Convergence: bonus=\(convergenceBonus) clusterCount=\(clusterCount)")
         print("  Output:  truth=\(truth.title) rawRecoveryTruth=\(rawRecoveryTruth.title) action=\(action.title) canPush=\(canPushKeyLift)")
@@ -734,7 +710,7 @@ enum ReadinessEngine {
             )
         }
 
-        addDriver("HRV", adjustedHRVScore, consecutiveFlag: \.hrvDown10)
+        addDriver("HRV", hrvScore, consecutiveFlag: \.hrvDown10)
         addDriver("RHR", rhrScore, consecutiveFlag: \.rhrUp4)
         addDriver("Sleep", sleepScore, consecutiveFlag: \.sleepShort1)
         // Label is "Sleep Efficiency" (not "Sleep Quality") so the readiness driver row
