@@ -111,6 +111,8 @@ Load and recovery signals as additive contributors. TRIMP is wired into the read
 
 **Step 4a — mechanicalLoad frequency probe.** Instrument how often the EP write fires per session. This is also the vehicle for confirming/resolving the double-write bug: diagnosed as whole-session double-counting (clean 2× ratio; identical values on three consecutive Sundays). The discriminating trigger (universal per-session double-write vs. Sunday-specific re-trigger) was unconfirmed when a data restore wiped App Group history. Prescribed fix: idempotent day-key accumulation guarded by session UUID.
 
+**RESOLVED-BY-RESTORE / NOT REPRODUCIBLE (2026-08-27).** EP write-path recon: calculateMechanicalLoad is computed ONCE and the same value feeds both the session display and the App Group write (a REPLACE, not additive). Display and write cannot diverge in current code, so a 2x stored-vs-displayed is structurally impossible. The computation is a clean single flat pass over working sets — no warmup/per-side/nested double-count. The July 2x was a legacy/restore artifact, cleared when the restore wiped the App Group history. NO code fix applied or needed — the prior prescribed fix (idempotent += guard by session UUID) is SUPERSEDED: the write is not additive, so there is nothing to guard. Confirmation pending: one live-session measurement (compare EP displayed figure to stored raw for that date) to convert code-analysis to empirical close. Until then: not-reproducible-in-code, confirm-with-one-session.
+
 Known debt — **durability gap:** App Group UserDefaults is the sole copy of mechanical-load history; no rehydration path survives a restore or reinstall.
 
 Exit gate: probe confirms write frequency; double-write trigger identified; idempotent fix specified.
