@@ -133,6 +133,26 @@ Governs what crosses to Watch/widget: horizon-filtered eligibility, provenance-s
 
 Exit gate: projection contract enforced; Watch payload size invariant to longevity additions.
 
+### Widget projection — first Phase 6 consumer (2026-08-27)
+
+The widget no longer recomputes the verdict. It reads a written WidgetProjection
+(truth, flagCount, RHR/HRV/sleep + trimmed sparkline series, updatedAt) from a single
+App Group key; the app writes it on every recompute (foreground backfill, manual edit,
+and background HealthKit delivery — the last now computes evaluate() in the main-app
+process where it previously computed nothing). This is the Phase 6 contract's first
+consumer: provenance-stripped, single-key, compute-once/display-many across the process
+boundary. Widget is a dumb mirror — nil projection renders a neutral placeholder, never
+a guessed verdict.
+
+Closed a cross-process hazard in the process: the widget had been re-running
+ReadinessEngine.evaluate() in its own process, which (a) diverged from the app's verdict
+on screen and (b) wrote the shared verdict-log gate key from a second, uncoordinated
+process on a single-digit-minute cadence — racing the exact state the load-origin gate
+fix reads. Any gate-log anomaly observed BEFORE this build could have been the widget
+racing, not the gate logic. appendVerdictLog is now structurally main-app-only (bundle-id
+guard) so this class of race cannot recur through another door. Verified on-device:
+widget mirrors app.
+
 ---
 
 ## Phase 7 — VO2max estimator (parallel track — capture slice complete)

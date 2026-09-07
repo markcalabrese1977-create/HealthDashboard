@@ -917,6 +917,20 @@ struct ContentView: View {
         reeval.sleepQuality = readiness.sleepQuality
         readiness = reeval
 
+        SharedStore.saveWidgetProjection(
+            WidgetProjection(
+                truth: readiness.truth,
+                flagCount: readiness.flags.count,
+                rhr: snapshot.restingHR,
+                hrv: snapshot.hrv,
+                sleepHours: snapshot.sleepHours,
+                rhrSeries: history.suffix(28).map { $0.restingHR },
+                hrvSeries: history.suffix(28).map { $0.hrvMS },
+                sleepSeries: history.suffix(28).map { $0.sleepHours },
+                updatedAt: snapshot.updatedAt
+            )
+        )
+
         WidgetCenter.shared.reloadTimelines(ofKind: "HealthDashboardWidget")
     }
 
@@ -1009,6 +1023,20 @@ struct ContentView: View {
                     dumpTrace: true   // headline night only — prints the scored bout list (DEBUG)
                 )
                 readiness = evaluated
+
+                SharedStore.saveWidgetProjection(
+                    WidgetProjection(
+                        truth: readiness.truth,
+                        flagCount: readiness.flags.count,
+                        rhr: snapshot.restingHR,
+                        hrv: snapshot.hrv,
+                        sleepHours: snapshot.sleepHours,
+                        rhrSeries: history.suffix(28).map { $0.restingHR },
+                        hrvSeries: history.suffix(28).map { $0.hrvMS },
+                        sleepSeries: history.suffix(28).map { $0.sleepHours },
+                        updatedAt: snapshot.updatedAt
+                    )
+                )
 
                 // Push the result to the Watch (if paired) — exactly once per refresh
                 // cycle, right after the engine has run against the freshest history.

@@ -597,6 +597,30 @@ extension ReadinessResult {
         return "Readiness is being shaped by \(driverSummary)."
     }
 }
+
+// MARK: - Widget Projection (dumb-mirror render payload)
+//
+// Carries EXACTLY what HealthDashboardWidget renders — nothing else. The widget must
+// never call ReadinessEngine.evaluate() itself (that both diverges from the app's
+// verdict and races the shared hysteresis gate log — see SharedStore.appendVerdictLog).
+// The app computes ReadinessResult once, projects the rendered fields into this struct,
+// and writes it here; the widget only ever reads and displays it.
+//
+// Series are [Double?], not [Double]: Sparkline (TrendUI.swift) relies on nil to render
+// a gap for a missing day rather than a false dip to zero — flattening to [Double] here
+// would corrupt that gap rendering, so the optional is preserved through encoding.
+struct WidgetProjection: Codable, Equatable {
+    let truth: ReadinessStatus
+    let flagCount: Int
+    let rhr: Int
+    let hrv: Int
+    let sleepHours: Double
+    let rhrSeries: [Double?]
+    let hrvSeries: [Double?]
+    let sleepSeries: [Double?]
+    let updatedAt: Date
+}
+
 // MARK: - App Group Store + Debug Hooks
 
 enum SharedStore {
@@ -604,6 +628,9 @@ enum SharedStore {
 
     // Snapshot
     static let snapshotKey = "health.snapshot.v2"
+
+    // Widget projection (dumb-mirror render payload; see WidgetProjection)
+    static let widgetProjectionKey = "health.widgetProjection.v1"
 
     // History (28d preferred; fallback to legacy 7d key)
     static let historyKey7  = "health.history.7d.v1"     // legacy
@@ -686,6 +713,36 @@ enum SharedStore {
             log("📤 save(snapshot) -> RHR=\(snapshot.restingHR) HRV=\(snapshot.hrv) Sleep=\(String(format: "%.1f", snapshot.sleepHours)) InBed=\(String(format: "%.1f", snapshot.sleepInBedHours)) updatedAt=\(snapshot.updatedAt)")
         } else {
             log("❌ save(snapshot) encode failed")
+        }
+    }
+
+    // MARK: Widget Projection
+
+    /// Returns nil if no projection has been written yet, or if the stored payload
+    /// fails to decode. Deliberately does NOT fall back to a fabricated verdict —
+    /// the widget must render an explicit "no data yet" state instead, never a guess.
+    static func loadWidgetProjection() -> WidgetProjection? {
+        guard
+            let d = defaults(),
+            let data = d.data(forKey: widgetProjectionKey),
+            let decoded = try? JSONDecoder().decode(WidgetProjection.self, from: data)
+        else {
+            log("📥 load(widgetProjection) -> nil (no data yet)")
+            return nil
+        }
+
+        log("📥 load(widgetProjection) -> truth=\(decoded.truth.rawValue) flags=\(decoded.flagCount) RHR=\(decoded.rhr) HRV=\(decoded.hrv) Sleep=\(String(format: "%.1f", decoded.sleepHours)) updatedAt=\(decoded.updatedAt)")
+        return decoded
+    }
+
+    static func saveWidgetProjection(_ projection: WidgetProjection) {
+        guard let d = defaults() else { return }
+
+        if let data = try? JSONEncoder().encode(projection) {
+            d.set(data, forKey: widgetProjectionKey)
+            log("📤 save(widgetProjection) -> truth=\(projection.truth.rawValue) flags=\(projection.flagCount) RHR=\(projection.rhr) HRV=\(projection.hrv) Sleep=\(String(format: "%.1f", projection.sleepHours)) updatedAt=\(projection.updatedAt)")
+        } else {
+            log("❌ save(widgetProjection) encode failed")
         }
     }
 
@@ -916,9 +973,22 @@ enum SharedStore {
         log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     }
 
+    // Main app's own bundle id (project.pbxproj PRODUCT_BUNDLE_IDENTIFIER for the
+    // HealthDashboard target). The widget extension, watch app, and watch widget all
+    // have distinct, differently-suffixed ids and fall through to the no-op branch.
+    private static let mainAppBundleID = "com.calabrese.HealthDashboard"
+
     /// Upserts today's record and trims the log to the most recent 30 days.
     /// Always call with the *raw* computed verdict before the hysteresis gate is applied.
+    ///
+    /// Structurally main-app-only: the widget no longer calls ReadinessEngine.evaluate()
+    /// (see WidgetProjection), but this guard closes the door so no other extension can
+    /// reintroduce the same race by calling evaluate() directly.
     static func appendVerdictLog(_ record: DailyVerdictRecord) {
+        guard Bundle.main.bundleIdentifier == mainAppBundleID else {
+            log("⛔️ appendVerdictLog blocked — not the main app (bundleIdentifier=\(Bundle.main.bundleIdentifier ?? "nil"))")
+            return
+        }
         guard let d = defaults() else { return }
 
         var log_ = loadVerdictLog()
