@@ -124,7 +124,9 @@ struct HealthDashboardApp: App {
                         // the app's own HKObserverQuery, not an extension) — see the
                         // main-app-only guard on appendVerdictLog.
                         let manual = await SharedStore.loadManual()
-                        let evaluated = ReadinessEngine.evaluate(history: points, manual: manual)
+                        let evaluated = VerdictWriteTrace.withContext(site: "hkObserver", history: points) {
+                            ReadinessEngine.evaluate(history: points, manual: manual)
+                        }
                         await SharedStore.saveWidgetProjection(
                             WidgetProjection(
                                 truth: evaluated.truth,
