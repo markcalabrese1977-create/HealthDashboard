@@ -448,6 +448,44 @@ struct ContentView: View {
                         }
                     }
 
+                    // Diagnostic surface for the verdict write trace. Gated on the same
+                    // constant that gates the file I/O, so flipping verdictTraceEnabled to
+                    // false removes the UI and the recording together.
+                    if VerdictWriteTrace.verdictTraceEnabled {
+                        DashboardCard(title: "Diagnostics") {
+                            DisclosureGroup {
+                                VStack(alignment: .leading, spacing: 10) {
+                                    Text("Records which evaluation ends up owning each day's verdict record. Summary goes to the console (Console.app or Xcode), same as the verdict log dump.")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+
+                                    Button("Dump verdict trace") {
+                                        VerdictWriteTrace.dumpSummary()
+                                    }
+                                    .font(.subheadline.weight(.semibold))
+
+                                    // Only offered once there is a file with something in
+                                    // it — never hand the share sheet a dead URL.
+                                    if VerdictWriteTrace.hasTraceFile,
+                                       let traceURL = VerdictWriteTrace.fileURL {
+                                        ShareLink(item: traceURL) {
+                                            Label("Export trace JSONL", systemImage: "square.and.arrow.up")
+                                        }
+                                        .font(.subheadline.weight(.semibold))
+                                    } else {
+                                        Text("No trace file yet — it appears after the next verdict write.")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                .padding(.top, 6)
+                            } label: {
+                                Label("Verdict write trace", systemImage: "doc.text.magnifyingglass")
+                                    .font(.subheadline.weight(.semibold))
+                            }
+                        }
+                    }
+
                     if let summary = weeklySummary {
                                             WeeklySummaryCard(summary: summary)
                                         }
@@ -864,7 +902,9 @@ struct ContentView: View {
                 bodyMeasurements = SharedStore.loadBodyMeasurements()
                 // One explicit evaluation from cached history — holds until the
                 // post-fetch assignment in backfill7Days() replaces it.
-                readiness = ReadinessEngine.evaluate(history: history, manual: manual)
+                readiness = VerdictWriteTrace.withContext(site: "onAppear", history: history) {
+                    ReadinessEngine.evaluate(history: history, manual: manual)
+                }
             }
             .sheet(isPresented: $showDXAForm) {
                 DXAFormView(initial: nil) { scan in
@@ -913,7 +953,9 @@ struct ContentView: View {
         // explicitly, since readiness is no longer recomputed on every render.
         // Preserve the last-computed sleep composite: manual edits don't change sleep,
         // and segments aren't re-fetched here, so carry it over rather than dropping to nil.
-        var reeval = ReadinessEngine.evaluate(history: history, manual: manual)
+        var reeval = VerdictWriteTrace.withContext(site: "manualEdit", history: history) {
+            ReadinessEngine.evaluate(history: history, manual: manual)
+        }
         reeval.sleepQuality = readiness.sleepQuality
         readiness = reeval
 
@@ -1013,7 +1055,9 @@ struct ContentView: View {
 
                 // Single post-fetch evaluation with the full 28-day history — the
                 // only place evaluate() runs against complete data per refresh cycle.
-                var evaluated = ReadinessEngine.evaluate(history: history, manual: manual)
+                var evaluated = VerdictWriteTrace.withContext(site: "postBackfill", history: history) {
+                    ReadinessEngine.evaluate(history: history, manual: manual)
+                }
                 // Sleep composite (Phase 5): scored from the freshest history + this run's
                 // transient raw segments, assigned alongside the readiness result so it rides
                 // the Watch payload. Not computed by ReadinessEngine (separate engine).

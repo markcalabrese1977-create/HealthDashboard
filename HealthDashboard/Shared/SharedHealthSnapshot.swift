@@ -624,7 +624,10 @@ struct WidgetProjection: Codable, Equatable {
 // MARK: - App Group Store + Debug Hooks
 
 enum SharedStore {
-    static let appGroupID = "group.com.calabrese.healthdashboard"   // must match App Group in BOTH targets
+    // `nonisolated` so the diagnostic VerdictWriteTrace can read it off the main actor
+    // (the app target defaults to MainActor isolation). Compile-time constant; no
+    // behavior change.
+    nonisolated static let appGroupID = "group.com.calabrese.healthdashboard"   // must match App Group in BOTH targets
 
     // Snapshot
     static let snapshotKey = "health.snapshot.v2"
@@ -992,6 +995,13 @@ enum SharedStore {
         guard let d = defaults() else { return }
 
         var log_ = loadVerdictLog()
+
+        // Diagnostic trace (additive, observational — see VerdictWriteTrace). Captures the
+        // record this write is about to replace, BEFORE the upsert mutates the array, so the
+        // trace can show which evaluation ends up owning the day. Cannot throw and cannot
+        // affect the upsert, the trim, or the stored record.
+        let priorRecord = log_.first(where: { $0.dateISO == record.dateISO })
+        VerdictWriteTrace.record(writing: record, replacing: priorRecord)
 
         // Upsert: replace existing entry for the same date, or append.
         if let idx = log_.firstIndex(where: { $0.dateISO == record.dateISO }) {

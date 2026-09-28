@@ -107,10 +107,18 @@ struct WeeklySummary {
 
         // Weekly readiness scores
         let scores: [Int] = thisWeek.map { pt in
-            let r = ReadinessEngine.evaluate(
-                history: history.filter { $0.dayISO <= pt.dayISO },
-                manual: manual
-            )
+            // Hoisted into a local purely so the trace can record the EXACT history array
+            // this evaluate() call receives — same filter, same values, same order.
+            let truncatedHistory = history.filter { $0.dayISO <= pt.dayISO }
+            let r = VerdictWriteTrace.withContext(
+                site: "weeklySummary:\(pt.dayISO)",
+                history: truncatedHistory
+            ) {
+                ReadinessEngine.evaluate(
+                    history: truncatedHistory,
+                    manual: manual
+                )
+            }
             switch r.truth {
             case .green: return 2
             case .yellow: return 1
