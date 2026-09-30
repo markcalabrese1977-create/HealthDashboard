@@ -17,6 +17,7 @@ enum ReadinessMessageState {
     case yellowLoad     // yellow with zero negative recovery drivers → load-driven caution
     case gateHold       // rawTruth green, display held amber for one-day confirmation
     case red
+    case redLoad        // red with recovery-only verdict green → load-driven, not recovery-driven
     case sick
     case highPain
 }
@@ -73,6 +74,10 @@ extension ReadinessResult {
             }
             return "Minor watch item: \(negatives.prefix(2).map { driverDisplay($0) }.joined(separator: ", "))"
 
+        case .redLoad:
+            // Red reflects load, not recovery — same attribution as .yellowLoad.
+            return "Elevated training load"
+
         case .red, .sick, .highPain:
             if !negatives.isEmpty {
                 return negatives.map { driverDisplay($0) }.joined(separator: ", ")
@@ -81,15 +86,12 @@ extension ReadinessResult {
         }
     }
 
-    func presentation(manual: ManualReadinessInputs) -> ReadinessPresentation {
+    /// Which copy state the card is in. Shared by presentation() and driverDisplays() so the
+    /// headline and the driver-row tone can never disagree about the state.
+    func resolveMessageState(manual: ManualReadinessInputs) -> ReadinessMessageState {
         let negativeDrivers = drivers.filter { $0.isNegative }
 
-        let confidenceLabel = confidence.title
-            .replacingOccurrences(of: " confidence", with: "")
-
-        let confidenceLine = "Confidence: \(confidenceLabel)"
-
-        let messageState: ReadinessMessageState = {
+        return {
             if manual.isSick {
                 return .sick
             }
@@ -99,7 +101,9 @@ extension ReadinessResult {
             }
 
             if action == .red {
-                return .red
+                // Load-caused red: the load-stripped recovery verdict is green. nil (snapshots
+                // encoded before the field existed, widget decode) keeps the recovery-red copy.
+                return rawRecoveryTruth == .green ? .redLoad : .red
             }
 
             // Gate hold: raw verdict is green but the display is held amber for one-day
@@ -125,6 +129,17 @@ extension ReadinessResult {
 
             return .greenNoPush
         }()
+    }
+
+    func presentation(manual: ManualReadinessInputs) -> ReadinessPresentation {
+        let negativeDrivers = drivers.filter { $0.isNegative }
+
+        let confidenceLabel = confidence.title
+            .replacingOccurrences(of: " confidence", with: "")
+
+        let confidenceLine = "Confidence: \(confidenceLabel)"
+
+        let messageState = resolveMessageState(manual: manual)
 
         let headline: String
         let subline: String
@@ -149,6 +164,12 @@ extension ReadinessResult {
             subline = "Recovery is compromised"
             baseExplanation = "Multiple recovery systems are under strain. Use the lowest-cost version of training today, or take a recovery day."
             guidanceButtonTitle = "View recovery guidance"
+
+        case .redLoad:
+            headline = ReadinessRedLoadCopy.headline
+            subline = ReadinessRedLoadCopy.subline
+            baseExplanation = ReadinessRedLoadCopy.explanation
+            guidanceButtonTitle = "View training guidance"
 
         case .yellowCluster:
             headline = "Train with guardrails"
@@ -276,8 +297,11 @@ extension ReadinessResult {
         let consecutiveDays: Int
     }
 
-    private func sentiment(for driver: ReadinessDriver) -> DriverSentiment {
+    private func sentiment(for driver: ReadinessDriver, loadOriginRed: Bool) -> DriverSentiment {
         guard driver.isNegative else { return .positive }
+        // Load-caused red: the recovery-only verdict is green, so these recovery rows were
+        // discounted by the verdict — neutral, not warn (same reasoning as Green below).
+        if loadOriginRed { return .calm }
         // Warn is reserved for non-Green cards. On a Green card every negative
         // driver was, by definition, discounted by the verdict, so it reads
         // calm — otherwise an orange row would contradict the Green
@@ -342,9 +366,11 @@ extension ReadinessResult {
             : "Lower sleep efficiency than your norm."
     }
 
-    func driverDisplays() -> [DriverDisplay] {
-        drivers.map { d in
-            let s = sentiment(for: d)
+    func driverDisplays(manual: ManualReadinessInputs = .default) -> [DriverDisplay] {
+        // Sick / high-pain keep their warn tone: resolveMessageState gives them priority over .redLoad.
+        let loadOriginRed = resolveMessageState(manual: manual) == .redLoad
+        return drivers.map { d in
+            let s = sentiment(for: d, loadOriginRed: loadOriginRed)
             return DriverDisplay(
                 label: d.label,
                 sentiment: s,

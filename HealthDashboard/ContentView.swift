@@ -356,7 +356,7 @@ struct ContentView: View {
 
                             if !readiness.drivers.isEmpty {
                                 VStack(alignment: .leading, spacing: 8) {
-                                    let displays = readiness.driverDisplays()
+                                    let displays = readiness.driverDisplays(manual: manual)
                                     ForEach(Array(displays.enumerated()), id: \.offset) { index, display in
                                         DriverRow(display: display, onTap: { selectedMetric = $0 })
 

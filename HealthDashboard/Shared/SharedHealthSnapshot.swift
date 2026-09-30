@@ -499,6 +499,15 @@ enum ReadinessLoadCopy {
     static let explanation = "Recovery signals look fine — today’s training and activity load is what’s pulling readiness down. Run a controlled session and avoid stacking more cost on top."
 }
 
+// Red driven purely by LOAD: action is red while the load-stripped recovery verdict
+// (rawRecoveryTruth) is green. Attributes the red to load, not recovery — the case the
+// generic .red copy ("Recovery is compromised") misdescribed.
+enum ReadinessRedLoadCopy {
+    static let headline = "Heavy load today"
+    static let subline = "Recovery signals are within range"
+    static let explanation = "Today’s training pushed load well above your usual. The red reflects load, not recovery. Keep the rest of today easy."
+}
+
 struct ReadinessResult: Codable, Equatable {
     var truth: ReadinessStatus          // gated/displayed truth color
     var rawTruth: ReadinessStatus       // raw computed truth (before hysteresis gate)
