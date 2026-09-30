@@ -531,6 +531,12 @@ struct ReadinessResult: Codable, Equatable {
     //   .unavailable = it ran but had no scoreable sleep
     // Scalars only, so it rides WatchPayload with no size regression.
     var sleepQuality: SleepQualityResult? = nil
+
+    // Load-stripped verdict (recoveryScore alone, same thresholds/cluster rules) — the value the
+    // engine already computes and logs as DailyVerdictRecord.rawRecoveryTruth. Lets presentation
+    // tell a load-caused red (rawRecoveryTruth == .green) from a recovery-caused one.
+    //   nil = not populated (snapshots/payloads encoded before this field existed, `.empty`)
+    var rawRecoveryTruth: ReadinessStatus? = nil
 }
 extension ReadinessResult {
     /// Inert placeholder shown only for the instant between view creation and the
