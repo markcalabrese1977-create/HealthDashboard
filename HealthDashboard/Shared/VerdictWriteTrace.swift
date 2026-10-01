@@ -84,6 +84,48 @@ nonisolated struct VerdictTraceEntry: Codable, Equatable {
     }
 }
 
+// MARK: - One post-evaluate result record
+//
+// The write trace above is recorded from INSIDE evaluate(), before ReadinessResult exists, so
+// it cannot carry `action` or driver state. This record is written by withContext AFTER the
+// evaluation returns, to its own file. Self-contained: no join key to VerdictTraceEntry.
+
+nonisolated struct VerdictResultDriver: Codable, Equatable {
+    let label: String
+    let isNegative: Bool
+    /// Rendered tone (positive / calm / warn) from the presentation's own driverDisplays;
+    /// nil when it could not be asked.
+    let sentiment: String?
+}
+
+nonisolated struct VerdictResultEntry: Codable, Equatable {
+    let writtenAt: Date
+    let site: String
+    let evalDayISO: String
+    let action: ReadinessStatus
+
+    let rawRecoveryTruth: ReadinessStatus?
+    let confidence: ReadinessConfidence?
+    let messageState: String?
+    let negativeDriverCount: Int?
+    let drivers: [VerdictResultDriver]?
+    let hrvFallback: Bool?
+    let sleepWindowEnd: Date?        // encoded as an ISO-8601 string
+
+    /// Suppression identity: every field EXCEPT writtenAt and site.
+    func samePayload(as other: VerdictResultEntry) -> Bool {
+        evalDayISO == other.evalDayISO
+            && action == other.action
+            && rawRecoveryTruth == other.rawRecoveryTruth
+            && confidence == other.confidence
+            && messageState == other.messageState
+            && negativeDriverCount == other.negativeDriverCount
+            && drivers == other.drivers
+            && hrvFallback == other.hrvFallback
+            && sleepWindowEnd == other.sleepWindowEnd
+    }
+}
+
 // MARK: - Per-day rollup (pure output of summarize)
 
 /// Result of reading the JSONL file: the entries that parsed, plus how many lines did not.
@@ -131,6 +173,19 @@ nonisolated enum VerdictWriteTrace {
     static let unattributedSite = "(unattributed)"
 
     private static let fileName = "verdict-write-trace.jsonl"
+
+    /// Post-evaluate result record (see VerdictResultEntry). Separate file, same ioQueue.
+    private static let resultFileName = "verdict-result-trace.jsonl"
+
+    /// Drop a result entry whose payload (everything but writtenAt and site) equals the last
+    /// one written. Bursts of identical hkObserver evaluations are common.
+    static let resultSuppressionEnabled = true
+
+    /// Only the live sites record a result; weeklySummary (a loop over truncated history) never does.
+    static let resultTraceSites: Set<String> = ["onAppear", "manualEdit", "postBackfill", "hkObserver"]
+
+    /// evalDayISO when the evaluated history was empty.
+    static let resultNoEvalDay = "(none)"
 
     /// Every filesystem touch in this file goes through this one serial queue: appends from
     /// the main actor (onAppear / manualEdit / postBackfill / weeklySummary) and from
@@ -251,6 +306,71 @@ nonisolated enum VerdictWriteTrace {
             try handle.write(contentsOf: data)
         } catch {
             // Intentionally swallowed — see the file header.
+        }
+    }
+
+    // MARK: - Result record write path
+    //
+    // Same ioQueue, same appendOnQueue, same encoder (.iso8601) as the write trace. The one
+    // piece of mutable state, the last payload written, is only ever read or written inside
+    // `ioQueue.sync`, so the queue is its lock — no second synchronization mechanism.
+
+    static var resultFileURL: URL? {
+        FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: SharedStore.appGroupID)?
+            .appendingPathComponent(resultFileName)
+    }
+
+    static var hasResultFile: Bool {
+        guard verdictTraceEnabled, let url = resultFileURL else { return false }
+        return ioQueue.sync {
+            guard let size = try? FileManager.default
+                .attributesOfItem(atPath: url.path)[.size] as? NSNumber else { return false }
+            return size.intValue > 0
+        }
+    }
+
+    /// File path + payload of the last result line appended. Guarded by `ioQueue`.
+    nonisolated(unsafe) private static var lastResult: (path: String, entry: VerdictResultEntry)?
+
+    static func recordResult(_ entry: VerdictResultEntry) {
+        recordResult(entry, to: resultFileURL)
+    }
+
+    /// `url` is injectable so tests can run the real suppression + append path against a temp file.
+    /// Suppression keeps the first entry's site and time and never rewrites an existing line.
+    static func recordResult(_ entry: VerdictResultEntry, to url: URL?) {
+        guard verdictTraceEnabled, let url else { return }
+        guard var line = try? encoder.encode(entry) else { return }
+        line.append(0x0A)
+
+        ioQueue.sync {
+            // The file-exists check keeps a deleted/exported-and-cleared file from swallowing
+            // the first entry that should start it again.
+            if resultSuppressionEnabled,
+               let last = lastResult,
+               last.path == url.path,
+               last.entry.samePayload(as: entry),
+               FileManager.default.fileExists(atPath: url.path) {
+                return
+            }
+            appendOnQueue(line, to: url)
+            lastResult = (url.path, entry)
+        }
+    }
+
+    /// Test seam: forget the last payload so a test starts from a cold suppression state.
+    static func resetResultSuppression() {
+        ioQueue.sync { lastResult = nil }
+    }
+
+    /// Reads a result file back (tests and ad-hoc inspection). Lines that fail to decode are skipped.
+    static func loadResultEntries(from url: URL) -> [VerdictResultEntry] {
+        ioQueue.sync {
+            guard let raw = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+            return raw.split(separator: "\n", omittingEmptySubsequences: true).compactMap {
+                $0.data(using: .utf8).flatMap { try? decoder.decode(VerdictResultEntry.self, from: $0) }
+            }
         }
     }
 

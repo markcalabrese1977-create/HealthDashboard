@@ -472,6 +472,15 @@ struct ContentView: View {
                                             Label("Export trace JSONL", systemImage: "square.and.arrow.up")
                                         }
                                         .font(.subheadline.weight(.semibold))
+
+                                        // Post-evaluate result record (action, message state, HRV source).
+                                        if VerdictWriteTrace.hasResultFile,
+                                           let resultURL = VerdictWriteTrace.resultFileURL {
+                                            ShareLink(item: resultURL) {
+                                                Label("Export result JSONL", systemImage: "square.and.arrow.up")
+                                            }
+                                            .font(.subheadline.weight(.semibold))
+                                        }
                                     } else {
                                         Text("No trace file yet — it appears after the next verdict write.")
                                             .font(.caption)
@@ -902,7 +911,7 @@ struct ContentView: View {
                 bodyMeasurements = SharedStore.loadBodyMeasurements()
                 // One explicit evaluation from cached history — holds until the
                 // post-fetch assignment in backfill7Days() replaces it.
-                readiness = VerdictWriteTrace.withContext(site: "onAppear", history: history) {
+                readiness = VerdictWriteTrace.withContext(site: "onAppear", history: history, manual: manual) {
                     ReadinessEngine.evaluate(history: history, manual: manual)
                 }
             }
@@ -953,7 +962,7 @@ struct ContentView: View {
         // explicitly, since readiness is no longer recomputed on every render.
         // Preserve the last-computed sleep composite: manual edits don't change sleep,
         // and segments aren't re-fetched here, so carry it over rather than dropping to nil.
-        var reeval = VerdictWriteTrace.withContext(site: "manualEdit", history: history) {
+        var reeval = VerdictWriteTrace.withContext(site: "manualEdit", history: history, manual: manual) {
             ReadinessEngine.evaluate(history: history, manual: manual)
         }
         reeval.sleepQuality = readiness.sleepQuality
@@ -1055,7 +1064,7 @@ struct ContentView: View {
 
                 // Single post-fetch evaluation with the full 28-day history — the
                 // only place evaluate() runs against complete data per refresh cycle.
-                var evaluated = VerdictWriteTrace.withContext(site: "postBackfill", history: history) {
+                var evaluated = VerdictWriteTrace.withContext(site: "postBackfill", history: history, manual: manual) {
                     ReadinessEngine.evaluate(history: history, manual: manual)
                 }
                 // Sleep composite (Phase 5): scored from the freshest history + this run's
