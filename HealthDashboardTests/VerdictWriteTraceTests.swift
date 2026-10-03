@@ -513,7 +513,7 @@ final class VerdictWriteTraceTests: XCTestCase {
         XCTAssertEqual(s.lastWrittenAt, Self.base.addingTimeInterval(10))
     }
 
-    func testSummarizeReportsFileLevelSuppressedCountAndOmitsSuppressedOnlyDays() {
+    func testSummarizeReportsFileLevelSuppressedCountAndShowsSuppressedOnlyDays() {
         let entries = [
             entry("2026-09-27", site: "onAppear", offsetSeconds: 0),
             suppressedEntry("2026-09-27", offsetSeconds: 1),
@@ -523,7 +523,53 @@ final class VerdictWriteTraceTests: XCTestCase {
         let summary = VerdictWriteTrace.summarize(entries: entries, malformedLines: 0)
 
         XCTAssertEqual(summary.suppressedWrites, 2)
-        XCTAssertEqual(summary.days.map { $0.dateISO }, ["2026-09-27"])
+        XCTAssertEqual(summary.days.map { $0.dateISO }, ["2026-09-27", "2026-09-29"])
         XCTAssertEqual(summary.days[0].suppressedWrites, 1)
+        XCTAssertTrue(summary.days[0].hasOwner)
+        XCTAssertEqual(summary.days[0].owner?.site, "onAppear")
+    }
+
+    func testSuppressedOnlyDayHasRowWithNoOwner() {
+        let entries = [
+            suppressedEntry("2026-09-29", offsetSeconds: 10, site: "weeklySummary:2026-09-24", rawTotal: -6),
+            suppressedEntry("2026-09-29", offsetSeconds: 12, site: "weeklySummary:2026-09-25", rawTotal: -3),
+            suppressedEntry("2026-09-29", offsetSeconds: 14, site: "weeklySummary:2026-09-26", rawTotal: -5),
+        ]
+
+        let days = VerdictWriteTrace.summarize(entries: entries)
+
+        XCTAssertEqual(days.count, 1)
+        let d = days[0]
+        XCTAssertEqual(d.dateISO, "2026-09-29")
+        XCTAssertFalse(d.hasOwner)
+        XCTAssertNil(d.owner)
+        XCTAssertEqual(d.totalWrites, 0)
+        XCTAssertEqual(d.suppressedWrites, 3)
+        XCTAssertTrue(d.writesPerSite.isEmpty, "suppressed attempts are not live writes")
+        XCTAssertNil(d.firstFullHistoryEntry)
+        XCTAssertEqual(d.firstWrittenAt, Self.base.addingTimeInterval(10))
+        XCTAssertEqual(d.lastWrittenAt, Self.base.addingTimeInterval(14))
+    }
+
+    func testDayGainsOwnerOnceALiveWriteArrives() {
+        let suppressedOnly = [suppressedEntry("2026-09-29", offsetSeconds: 1)]
+        XCTAssertFalse(VerdictWriteTrace.summarize(entries: suppressedOnly)[0].hasOwner)
+
+        let withLive = suppressedOnly + [entry("2026-09-29", site: "onAppear", offsetSeconds: 2, rawTotal: 4)]
+        let d = VerdictWriteTrace.summarize(entries: withLive)[0]
+        XCTAssertTrue(d.hasOwner)
+        XCTAssertEqual(d.owner?.site, "onAppear")
+        XCTAssertEqual(d.totalWrites, 1)
+        XCTAssertEqual(d.suppressedWrites, 1)
+    }
+
+    func testDaysStaySortedWhenSuppressedOnlyDaysInterleave() {
+        let entries = [
+            entry("2026-09-28", site: "onAppear", offsetSeconds: 0),
+            suppressedEntry("2026-09-26", offsetSeconds: 1),
+            suppressedEntry("2026-09-29", offsetSeconds: 2),
+        ]
+        XCTAssertEqual(VerdictWriteTrace.summarize(entries: entries).map { $0.dateISO },
+                       ["2026-09-26", "2026-09-28", "2026-09-29"])
     }
 }

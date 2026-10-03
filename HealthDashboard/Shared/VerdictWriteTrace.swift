@@ -167,9 +167,19 @@ nonisolated struct VerdictTraceDaySummary: Equatable {
     /// that was NOT running on truncated history. Nil when no write that day qualified.
     let firstFullHistoryEntry: VerdictTraceEntry?
 
-    /// The write that owns the stored record for this day (last one wins in the upsert).
-    /// Never a suppressed entry: those did not touch the log.
+    /// False for a day whose entries are ALL suppressed: no live write has touched the log, so
+    /// nothing owns the stored record (it may be empty). Use `owner` rather than `finalEntry` when
+    /// that distinction matters.
+    let hasOwner: Bool
+
+    /// The write that owns the stored record for this day (last one wins in the upsert), never a
+    /// suppressed entry. When `hasOwner` is false this is only the LAST suppressed attempt, kept so
+    /// the field stays non-optional; in that case the numeric ranges and times above describe the
+    /// suppressed ATTEMPTS, not anything stored.
     let finalEntry: VerdictTraceEntry
+
+    /// The owning live write, or nil for a day with only suppressed entries.
+    var owner: VerdictTraceEntry? { hasOwner ? finalEntry : nil }
 }
 
 // nonisolated for the same reason as VerdictTraceContext above: this is file I/O and pure
@@ -485,18 +495,41 @@ nonisolated enum VerdictWriteTrace {
     /// when several writes share a timestamp.
     ///
     /// Suppressed entries (writes VerdictPersistence blocked) are excluded from write counts, sites,
-    /// ranges and OWNER, and counted separately per day. A day with ONLY suppressed entries has no
-    /// owner and is omitted here; its entries still count in the file-level `suppressedWrites`.
+    /// ranges and OWNER, and counted separately per day. A day with ONLY suppressed entries still
+    /// gets a row: totalWrites 0, suppressedWrites N, hasOwner false (owner nil).
     static func summarize(entries: [VerdictTraceEntry]) -> [VerdictTraceDaySummary] {
         let live = entries.filter { $0.suppressed != true }
-        let suppressedPerDay = Dictionary(
+        let suppressedByDay = Dictionary(
             grouping: entries.filter { $0.suppressed == true },
             by: { $0.dateISO }
-        ).mapValues { $0.count }
+        )
+        let suppressedPerDay = suppressedByDay.mapValues { $0.count }
         let grouped = Dictionary(grouping: live.enumerated(), by: { $0.element.dateISO })
 
-        return grouped.keys.sorted().compactMap { dateISO -> VerdictTraceDaySummary? in
-            guard let indexed = grouped[dateISO], !indexed.isEmpty else { return nil }
+        let allDays = Set(grouped.keys).union(suppressedByDay.keys)
+        return allDays.sorted().compactMap { dateISO -> VerdictTraceDaySummary? in
+            guard let indexed = grouped[dateISO], !indexed.isEmpty else {
+                // Suppressed-only day: describe the attempts, claim no owner.
+                guard let attempts = suppressedByDay[dateISO], !attempts.isEmpty else { return nil }
+                let times = attempts.map { $0.writtenAt }
+                let totals = attempts.map { $0.rawTotal }
+                let recoveries = attempts.compactMap { $0.rawRecovery }
+                return VerdictTraceDaySummary(
+                    dateISO: dateISO,
+                    totalWrites: 0,
+                    suppressedWrites: attempts.count,
+                    writesPerSite: [:],
+                    firstWrittenAt: times.min() ?? attempts[0].writtenAt,
+                    lastWrittenAt: times.max() ?? attempts[0].writtenAt,
+                    minRawTotal: totals.min() ?? 0,
+                    maxRawTotal: totals.max() ?? 0,
+                    minRawRecovery: recoveries.min(),
+                    maxRawRecovery: recoveries.max(),
+                    firstFullHistoryEntry: nil,
+                    hasOwner: false,
+                    finalEntry: attempts[attempts.count - 1]
+                )
+            }
 
             let ordered = indexed
                 .sorted {
@@ -526,6 +559,7 @@ nonisolated enum VerdictWriteTrace {
                 minRawRecovery: recoveries.min(),
                 maxRawRecovery: recoveries.max(),
                 firstFullHistoryEntry: ordered.first { $0.historyLastDayISO == dateISO },
+                hasOwner: true,
                 finalEntry: ordered[ordered.count - 1]
             )
         }
@@ -587,6 +621,12 @@ nonisolated enum VerdictWriteTrace {
         }
 
         for s in summary.days {
+            // Only suppressed attempts so far: nothing owns the day's record.
+            guard s.hasOwner else {
+                logger.log("  \(s.dateISO, privacy: .public) | writes=0 suppressed=\(s.suppressedWrites, privacy: .public) | OWNER: none (no live write; only suppressed attempts)")
+                continue
+            }
+
             let sites = s.writesPerSite
                 .sorted { $0.key < $1.key }
                 .map { "\($0.key)×\($0.value)" }
