@@ -114,10 +114,12 @@ struct WeeklySummary {
                 site: "weeklySummary:\(pt.dayISO)",
                 history: truncatedHistory
             ) {
-                ReadinessEngine.evaluate(
-                    history: truncatedHistory,
-                    manual: manual
-                )
+                VerdictPersistence.withSuppressedPersistence {
+                    ReadinessEngine.evaluate(
+                        history: truncatedHistory,
+                        manual: manual
+                    )
+                }
             }
             switch r.truth {
             case .green: return 2
