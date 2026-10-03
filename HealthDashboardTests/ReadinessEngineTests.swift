@@ -1245,8 +1245,9 @@ final class ReadinessEngineTests: XCTestCase {
     }
 
     // Live-path equivalence: a live-style evaluate after the weekly loop must be unaffected by
-    // whether the weekly loop persisted. NO exemption for consecutiveDays here (flags still a set),
-    // and the stored log must be byte-identical afterwards.
+    // whether the weekly loop persisted. NO exemption for consecutiveDays here (flags still a set).
+    // The stored log afterwards must have equal decoded records and be byte-equal when re-encoded
+    // with sorted keys (raw bytes differ only by JSON key order, so they are not compared).
     func testLiveEvaluateAfterWeeklyLoopIsIdenticalPersistingVsSuppressed() throws {
         let a = runScenario(suppressedWeekly: false, thenLive: true)
         let b = runScenario(suppressedWeekly: true, thenLive: true)
