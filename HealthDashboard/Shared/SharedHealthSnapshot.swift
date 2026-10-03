@@ -499,6 +499,33 @@ enum ReadinessLoadCopy {
     static let explanation = "Recovery signals look fine — today’s training and activity load is what’s pulling readiness down. Run a controlled session and avoid stacking more cost on top."
 }
 
+// Yellow driven by LOAD with a green recovery-only verdict (rawRecoveryTruth == .green) but one or
+// more negative recovery drivers that were too small to move that verdict. Same load framing as
+// ReadinessLoadCopy, plus a plain mention of the minor drivers (named as the driver rows name
+// them), instead of the recovery-caution copy.
+enum ReadinessLoadMinorDriversCopy {
+    /// "Sleep" / "HRV and Sleep" / "HRV, Sleep and RHR" (no serial comma).
+    static func joinedNames(_ labels: [String]) -> String {
+        guard let last = labels.last else { return "" }
+        if labels.count == 1 { return last }
+        return labels.dropLast().joined(separator: ", ") + " and " + last
+    }
+
+    static func explanation(negativeLabels: [String]) -> String {
+        let verb = negativeLabels.count == 1 ? "is" : "are"
+        return "Today’s training and activity load is what’s pulling readiness down. Recovery is within range, though \(joinedNames(negativeLabels)) \(verb) a bit off. Run a controlled session and avoid stacking more cost on top."
+    }
+}
+
+// Red driven purely by LOAD: action is red while the load-stripped recovery verdict
+// (rawRecoveryTruth) is green. Attributes the red to load, not recovery — the case the
+// generic .red copy ("Recovery is compromised") misdescribed.
+enum ReadinessRedLoadCopy {
+    static let headline = "Heavy load today"
+    static let subline = "Recovery signals are within range"
+    static let explanation = "Today’s training pushed load well above your usual. The red reflects load, not recovery. Keep the rest of today easy."
+}
+
 struct ReadinessResult: Codable, Equatable {
     var truth: ReadinessStatus          // gated/displayed truth color
     var rawTruth: ReadinessStatus       // raw computed truth (before hysteresis gate)
@@ -531,6 +558,12 @@ struct ReadinessResult: Codable, Equatable {
     //   .unavailable = it ran but had no scoreable sleep
     // Scalars only, so it rides WatchPayload with no size regression.
     var sleepQuality: SleepQualityResult? = nil
+
+    // Load-stripped verdict (recoveryScore alone, same thresholds/cluster rules) — the value the
+    // engine already computes and logs as DailyVerdictRecord.rawRecoveryTruth. Lets presentation
+    // tell a load-caused red (rawRecoveryTruth == .green) from a recovery-caused one.
+    //   nil = not populated (snapshots/payloads encoded before this field existed, `.empty`)
+    var rawRecoveryTruth: ReadinessStatus? = nil
 }
 extension ReadinessResult {
     /// Inert placeholder shown only for the instant between view creation and the

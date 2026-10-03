@@ -553,6 +553,27 @@ enum ReadinessEngine {
         // Keep flags short and useful
         let uniqueFlags = Array(Dictionary(grouping: flags, by: { $0 }).keys).prefix(6)
 
+        // Signal deltas returned in ReadinessResult (and read by hrvDeltaMS below). Declared
+        // outside #if DEBUG so Release compiles; same arithmetic as the DEBUG-only versions
+        // they replace.
+        let hrvDeltaPct: Double? = {
+            guard let cur = today?.hrvMS, let base = hrvBase, base > 0 else { return nil }
+            return (cur - base) / base
+        }()
+        let rhrDeltaAbs: Double? = {
+            guard let cur = today?.restingHR, let base = rhrBase else { return nil }
+            return cur - base
+        }()
+        let sleepDeltaAbs: Double? = today?.sleepHours.map { $0 - sleepTarget }
+        let tempDeltaAbs: Double? = {
+            guard let cur = today?.wristTempDeltaC, let base = tempBase else { return nil }
+            return cur - base
+        }()
+        let rrDeltaAbs: Double? = {
+            guard let cur = today?.respiratoryRate, let base = rrBase else { return nil }
+            return cur - base
+        }()
+
         // DEBUG: explain readiness inputs + scoring
         #if DEBUG
         func fmt(_ x: Double?) -> String { x == nil ? "nil" : String(format: "%.2f", x!) }
@@ -567,12 +588,7 @@ enum ReadinessEngine {
         let spo2Cur = today?.spo2Pct
         let rrCur = today?.respiratoryRate
 
-        let hrvDeltaPct: Double? = (hrvCur != nil && hrvBase != nil && hrvBase! > 0) ? ((hrvCur! - hrvBase!) / hrvBase!) : nil
-        let rhrDeltaAbs: Double? = (rhrCur != nil && rhrBase != nil) ? (rhrCur! - rhrBase!) : nil
-        let sleepDeltaAbs: Double? = (sleepCur != nil) ? (sleepCur! - sleepTarget) : nil
-        let tempDeltaAbs: Double? = (tempCur != nil && tempBase != nil) ? (tempCur! - tempBase!) : nil
         let spo2DeltaAbs: Double? = (spo2Cur != nil && spo2Base != nil) ? (spo2Cur! - spo2Base!) : nil
-        let rrDeltaAbs: Double? = (rrCur != nil && rrBase != nil) ? (rrCur! - rrBase!) : nil
         let effDeltaAbs: Double? = (effCur != nil && effBase != nil) ? (effCur! - effBase!) : nil
 
         #if DEBUG
@@ -751,7 +767,8 @@ enum ReadinessEngine {
             effBase: effBase,
             cardioLoad: cardioLoad,
             mechanicalLoad: mechanicalLoad,
-            totalScore: total
+            totalScore: total,
+            rawRecoveryTruth: rawRecoveryTruth
         )
     }
 }
