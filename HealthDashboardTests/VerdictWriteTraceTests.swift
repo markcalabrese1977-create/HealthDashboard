@@ -427,4 +427,103 @@ final class VerdictWriteTraceTests: XCTestCase {
 
         XCTAssertEqual(decoded, original)
     }
+    // MARK: - Suppressed entries
+
+    private func suppressedEntry(
+        _ dateISO: String, offsetSeconds: TimeInterval, site: String = "weeklySummary:2026-09-24",
+        rawTotal: Int = -6
+    ) -> VerdictTraceEntry {
+        VerdictTraceEntry(
+            writtenAt: Self.base.addingTimeInterval(offsetSeconds),
+            dateISO: dateISO, site: site, historyLastDayISO: nil, historyCount: nil,
+            rawTotal: rawTotal, rawRecovery: nil, rawTruth: .yellow, rawRecoveryTruth: .yellow,
+            overwrote: false, priorRawTotal: nil, priorRawRecovery: nil,
+            suppressed: true
+        )
+    }
+
+    private func codecRoundTrip(_ e: VerdictTraceEntry) throws -> VerdictTraceEntry {
+        let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601
+        let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
+        return try dec.decode(VerdictTraceEntry.self, from: enc.encode(e))
+    }
+
+    func testSuppressedFieldRoundTripsWithAndWithoutValue() throws {
+        let withFlag = suppressedEntry("2026-09-28", offsetSeconds: 0)
+        XCTAssertEqual(try codecRoundTrip(withFlag), withFlag)
+        XCTAssertEqual(try codecRoundTrip(withFlag).suppressed, true)
+
+        let without = entry("2026-09-28", site: "onAppear", offsetSeconds: 0)
+        XCTAssertNil(without.suppressed)
+        XCTAssertEqual(try codecRoundTrip(without), without)
+    }
+
+    func testNormalEntryEncodesWithoutSuppressedKey() throws {
+        let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601
+        let json = String(decoding: try enc.encode(entry("2026-09-28", site: "onAppear", offsetSeconds: 0)),
+                          as: UTF8.self)
+        XCTAssertFalse(json.contains("suppressed"), json)
+    }
+
+    func testOldFormatLineWithoutSuppressedKeyDecodes() throws {
+        let line = """
+        {"writtenAt":"2026-09-28T12:00:00Z","dateISO":"2026-09-28","site":"onAppear","historyLastDayISO":"2026-09-28","historyCount":28,"rawTotal":-2,"rawRecovery":1,"rawTruth":"yellow","rawRecoveryTruth":"green","overwrote":true,"priorRawTotal":-3,"priorRawRecovery":0}
+        """
+        let load = VerdictWriteTrace.parse(line)
+        XCTAssertEqual(load.malformedLines, 0)
+        XCTAssertEqual(load.entries.count, 1)
+        XCTAssertNil(load.entries[0].suppressed)
+        XCTAssertEqual(load.entries[0].overwrote, true)
+    }
+
+    func testSuppressedAttemptEntryHasOverwroteFalseAndNilPriors() {
+        let record = DailyVerdictRecord(
+            dateISO: "2026-09-28", rawTotal: -6, rawRecovery: -6, rawTruth: .red, rawRecoveryTruth: .red
+        )
+        let e = VerdictWriteTrace.makeEntry(writing: record, replacing: nil, suppressed: true)
+        XCTAssertEqual(e.suppressed, true)
+        XCTAssertFalse(e.overwrote)
+        XCTAssertNil(e.priorRawTotal)
+        XCTAssertNil(e.priorRawRecovery)
+        XCTAssertEqual(e.rawTotal, -6)
+
+        let normal = VerdictWriteTrace.makeEntry(writing: record, replacing: record)
+        XCTAssertNil(normal.suppressed)
+        XCTAssertTrue(normal.overwrote)
+        XCTAssertEqual(normal.priorRawTotal, -6)
+    }
+
+    func testSummarizeIgnoresSuppressedForOwnerAndWriteCounts() {
+        let entries = [
+            entry("2026-09-28", site: "hkObserver", offsetSeconds: 0, rawTotal: -2),
+            suppressedEntry("2026-09-28", offsetSeconds: 5, rawTotal: -9),
+            entry("2026-09-28", site: "postBackfill", offsetSeconds: 10, rawTotal: 1),
+            suppressedEntry("2026-09-28", offsetSeconds: 15, rawTotal: -8),   // later than the last live write
+        ]
+
+        let s = VerdictWriteTrace.summarize(entries: entries)[0]
+
+        XCTAssertEqual(s.totalWrites, 2)
+        XCTAssertEqual(s.suppressedWrites, 2)
+        XCTAssertEqual(s.finalEntry.site, "postBackfill", "a later suppressed entry must not own the day")
+        XCTAssertEqual(s.finalEntry.rawTotal, 1)
+        XCTAssertEqual(s.minRawTotal, -2)
+        XCTAssertEqual(s.maxRawTotal, 1)
+        XCTAssertNil(s.writesPerSite["weeklySummary:2026-09-24"])
+        XCTAssertEqual(s.lastWrittenAt, Self.base.addingTimeInterval(10))
+    }
+
+    func testSummarizeReportsFileLevelSuppressedCountAndOmitsSuppressedOnlyDays() {
+        let entries = [
+            entry("2026-09-27", site: "onAppear", offsetSeconds: 0),
+            suppressedEntry("2026-09-27", offsetSeconds: 1),
+            suppressedEntry("2026-09-29", offsetSeconds: 2),   // today: only a weekly attempt so far
+        ]
+
+        let summary = VerdictWriteTrace.summarize(entries: entries, malformedLines: 0)
+
+        XCTAssertEqual(summary.suppressedWrites, 2)
+        XCTAssertEqual(summary.days.map { $0.dateISO }, ["2026-09-27"])
+        XCTAssertEqual(summary.days[0].suppressedWrites, 1)
+    }
 }

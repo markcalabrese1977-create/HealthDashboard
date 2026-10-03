@@ -1030,8 +1030,12 @@ enum SharedStore {
         }
 
         // Weekly-summary (and any other result-only) evaluations: no load, no upsert, no
-        // trim, no UserDefaults write. See VerdictPersistence.
-        if VerdictPersistence.isSuppressed { return }
+        // trim, no UserDefaults write. See VerdictPersistence. The attempt is still traced,
+        // marked suppressed, WITHOUT loading the log (so overwrote = false, no priors).
+        if VerdictPersistence.isSuppressed {
+            VerdictWriteTrace.record(writing: record, replacing: nil, suppressed: true)
+            return
+        }
 
         guard let d = defaults() else { return }
 

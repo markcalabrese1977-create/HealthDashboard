@@ -55,6 +55,11 @@ nonisolated struct VerdictTraceEntry: Codable, Equatable {
     let priorRawTotal: Int?
     let priorRawRecovery: Int?
 
+    /// True for a write that evaluate() attempted but VerdictPersistence suppressed (weekly
+    /// summary). nil on every normal entry and on lines written before this field existed, so
+    /// old JSONL decodes unchanged and normal entries still encode without the key.
+    let suppressed: Bool?
+
     init(
         writtenAt: Date,
         dateISO: String,
@@ -67,7 +72,8 @@ nonisolated struct VerdictTraceEntry: Codable, Equatable {
         rawRecoveryTruth: ReadinessStatus,
         overwrote: Bool,
         priorRawTotal: Int?,
-        priorRawRecovery: Int?
+        priorRawRecovery: Int?,
+        suppressed: Bool? = nil
     ) {
         self.writtenAt = writtenAt
         self.dateISO = dateISO
@@ -81,6 +87,7 @@ nonisolated struct VerdictTraceEntry: Codable, Equatable {
         self.overwrote = overwrote
         self.priorRawTotal = priorRawTotal
         self.priorRawRecovery = priorRawRecovery
+        self.suppressed = suppressed
     }
 }
 
@@ -139,11 +146,15 @@ nonisolated struct VerdictTraceLoad: Equatable {
 nonisolated struct VerdictTraceSummary: Equatable {
     let days: [VerdictTraceDaySummary]
     let malformedLines: Int
+    /// Suppressed entries across the whole file, including days that have no live write.
+    let suppressedWrites: Int
 }
 
 nonisolated struct VerdictTraceDaySummary: Equatable {
     let dateISO: String
+    /// Live writes only: suppressed entries are counted in `suppressedWrites`, never here.
     let totalWrites: Int
+    let suppressedWrites: Int
     let writesPerSite: [String: Int]
     let firstWrittenAt: Date
     let lastWrittenAt: Date
@@ -157,6 +168,7 @@ nonisolated struct VerdictTraceDaySummary: Equatable {
     let firstFullHistoryEntry: VerdictTraceEntry?
 
     /// The write that owns the stored record for this day (last one wins in the upsert).
+    /// Never a suppressed entry: those did not touch the log.
     let finalEntry: VerdictTraceEntry
 }
 
@@ -263,24 +275,35 @@ nonisolated enum VerdictWriteTrace {
     static func record(
         writing record: DailyVerdictRecord,
         replacing prior: DailyVerdictRecord?,
-        at writtenAt: Date = Date()
+        at writtenAt: Date = Date(),
+        suppressed: Bool = false
     ) {
         guard verdictTraceEnabled else { return }
-        self.record(
-            VerdictTraceEntry(
-                writtenAt: writtenAt,
-                dateISO: record.dateISO,
-                site: VerdictTraceContext.site,
-                historyLastDayISO: VerdictTraceContext.historyLastDayISO,
-                historyCount: VerdictTraceContext.historyCount,
-                rawTotal: record.rawTotal,
-                rawRecovery: record.rawRecovery,
-                rawTruth: record.rawTruth,
-                rawRecoveryTruth: record.rawRecoveryTruth,
-                overwrote: prior != nil,
-                priorRawTotal: prior?.rawTotal,
-                priorRawRecovery: prior?.rawRecovery
-            )
+        self.record(makeEntry(writing: record, replacing: prior, at: writtenAt, suppressed: suppressed))
+    }
+
+    /// Pure: the entry for one write attempt. A suppressed attempt never touched the log, so the
+    /// caller passes no prior and the entry reads overwrote = false with nil priors.
+    static func makeEntry(
+        writing record: DailyVerdictRecord,
+        replacing prior: DailyVerdictRecord?,
+        at writtenAt: Date = Date(),
+        suppressed: Bool = false
+    ) -> VerdictTraceEntry {
+        VerdictTraceEntry(
+            writtenAt: writtenAt,
+            dateISO: record.dateISO,
+            site: VerdictTraceContext.site,
+            historyLastDayISO: VerdictTraceContext.historyLastDayISO,
+            historyCount: VerdictTraceContext.historyCount,
+            rawTotal: record.rawTotal,
+            rawRecovery: record.rawRecovery,
+            rawTruth: record.rawTruth,
+            rawRecoveryTruth: record.rawRecoveryTruth,
+            overwrote: prior != nil,
+            priorRawTotal: prior?.rawTotal,
+            priorRawRecovery: prior?.rawRecovery,
+            suppressed: suppressed ? true : nil
         )
     }
 
@@ -460,8 +483,17 @@ nonisolated enum VerdictWriteTrace {
     /// Ordering within a day is by writtenAt, ties broken by the order entries were handed
     /// in (the order they were appended), so "final surviving entry" is deterministic even
     /// when several writes share a timestamp.
+    ///
+    /// Suppressed entries (writes VerdictPersistence blocked) are excluded from write counts, sites,
+    /// ranges and OWNER, and counted separately per day. A day with ONLY suppressed entries has no
+    /// owner and is omitted here; its entries still count in the file-level `suppressedWrites`.
     static func summarize(entries: [VerdictTraceEntry]) -> [VerdictTraceDaySummary] {
-        let grouped = Dictionary(grouping: entries.enumerated(), by: { $0.element.dateISO })
+        let live = entries.filter { $0.suppressed != true }
+        let suppressedPerDay = Dictionary(
+            grouping: entries.filter { $0.suppressed == true },
+            by: { $0.dateISO }
+        ).mapValues { $0.count }
+        let grouped = Dictionary(grouping: live.enumerated(), by: { $0.element.dateISO })
 
         return grouped.keys.sorted().compactMap { dateISO -> VerdictTraceDaySummary? in
             guard let indexed = grouped[dateISO], !indexed.isEmpty else { return nil }
@@ -485,6 +517,7 @@ nonisolated enum VerdictWriteTrace {
             return VerdictTraceDaySummary(
                 dateISO: dateISO,
                 totalWrites: ordered.count,
+                suppressedWrites: suppressedPerDay[dateISO] ?? 0,
                 writesPerSite: writesPerSite,
                 firstWrittenAt: ordered[0].writtenAt,
                 lastWrittenAt: ordered[ordered.count - 1].writtenAt,
@@ -502,7 +535,8 @@ nonisolated enum VerdictWriteTrace {
     static func summarize(entries: [VerdictTraceEntry], malformedLines: Int) -> VerdictTraceSummary {
         VerdictTraceSummary(
             days: summarize(entries: entries),
-            malformedLines: malformedLines
+            malformedLines: malformedLines,
+            suppressedWrites: entries.filter { $0.suppressed == true }.count
         )
     }
 
@@ -540,6 +574,10 @@ nonisolated enum VerdictWriteTrace {
         logger.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         logger.log("🖊️ VERDICT WRITE TRACE — entries=\(loaded.entries.count, privacy: .public) days=\(summary.days.count, privacy: .public) retention=\(verdictTraceRetentionDays, privacy: .public)d")
 
+        if summary.suppressedWrites > 0 {
+            logger.log("  suppressed (weekly) writes: \(summary.suppressedWrites, privacy: .public)")
+        }
+
         if summary.malformedLines > 0 {
             logger.log("  ⚠️ malformed lines skipped: \(summary.malformedLines, privacy: .public) — the rest of the trace is intact")
         }
@@ -561,7 +599,7 @@ nonisolated enum VerdictWriteTrace {
             let firstFull = s.firstFullHistoryEntry
                 .map { "\($0.site ?? unattributedSite) @ \($0.writtenAt)" } ?? "none"
 
-            logger.log("  \(s.dateISO, privacy: .public) | writes=\(s.totalWrites, privacy: .public) | rawTotal \(s.minRawTotal, privacy: .public)…\(s.maxRawTotal, privacy: .public) | rawRecovery \(recoveryRange, privacy: .public)")
+            logger.log("  \(s.dateISO, privacy: .public) | writes=\(s.totalWrites, privacy: .public) suppressed=\(s.suppressedWrites, privacy: .public) | rawTotal \(s.minRawTotal, privacy: .public)…\(s.maxRawTotal, privacy: .public) | rawRecovery \(recoveryRange, privacy: .public)")
             logger.log("      sites: \(sites, privacy: .public)")
             logger.log("      first full-history write: \(firstFull, privacy: .public)")
             logger.log("      OWNER (last write): site=\(s.finalEntry.site ?? unattributedSite, privacy: .public) rawTotal=\(s.finalEntry.rawTotal, privacy: .public) rawTruth=\(s.finalEntry.rawTruth.rawValue, privacy: .public) historyCount=\(s.finalEntry.historyCount ?? -1, privacy: .public) historyLast=\(s.finalEntry.historyLastDayISO ?? "nil", privacy: .public)")
