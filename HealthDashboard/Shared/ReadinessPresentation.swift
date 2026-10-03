@@ -15,6 +15,7 @@ enum ReadinessMessageState {
     case yellowIsolated
     case yellowCluster
     case yellowLoad     // yellow with zero negative recovery drivers → load-driven caution
+    case yellowLoadMinorDrivers  // yellow, recovery-only verdict green, but ≥1 sub-verdict negative driver
     case gateHold       // rawTruth green, display held amber for one-day confirmation
     case red
     case redLoad        // red with recovery-only verdict green → load-driven, not recovery-driven
@@ -63,8 +64,8 @@ extension ReadinessResult {
             }
             return "Several recovery signals off"
 
-        case .yellowLoad:
-            // No negative recovery drivers — the caution is load, not recovery.
+        case .yellowLoad, .yellowLoadMinorDrivers:
+            // No negative recovery drivers (or only sub-verdict ones) — the caution is load, not recovery.
             return "Elevated training load"
 
         case .gateHold:
@@ -114,6 +115,13 @@ extension ReadinessResult {
             }
 
             if action == .yellow {
+                // Load-caused yellow: the load-stripped recovery verdict is green, so any negative
+                // drivers were discounted by it (sub-verdict). Same attribution as .redLoad.
+                // rawRecoveryTruth .yellow / .red / nil keeps the recovery routing below.
+                if rawRecoveryTruth == .green {
+                    return negativeDrivers.isEmpty ? .yellowLoad : .yellowLoadMinorDrivers
+                }
+
                 // count==0 is a load-driven yellow (no negative recovery drivers) — it must
                 // NOT fall into the recovery "cluster" copy the old ternary misrouted it to.
                 switch negativeDrivers.count {
@@ -181,6 +189,14 @@ extension ReadinessResult {
             headline = "Train with guardrails"
             subline = ReadinessLoadCopy.subline
             baseExplanation = ReadinessLoadCopy.explanation
+            guidanceButtonTitle = "View training guidance"
+
+        case .yellowLoadMinorDrivers:
+            headline = "Train with guardrails"
+            subline = ReadinessLoadCopy.subline
+            baseExplanation = ReadinessLoadMinorDriversCopy.explanation(
+                negativeLabels: negativeDrivers.map { $0.label }
+            )
             guidanceButtonTitle = "View training guidance"
 
         case .gateHold:
@@ -297,11 +313,11 @@ extension ReadinessResult {
         let consecutiveDays: Int
     }
 
-    private func sentiment(for driver: ReadinessDriver, loadOriginRed: Bool) -> DriverSentiment {
+    private func sentiment(for driver: ReadinessDriver, loadOrigin: Bool) -> DriverSentiment {
         guard driver.isNegative else { return .positive }
-        // Load-caused red: the recovery-only verdict is green, so these recovery rows were
-        // discounted by the verdict — neutral, not warn (same reasoning as Green below).
-        if loadOriginRed { return .calm }
+        // Load-caused red or yellow: the recovery-only verdict is green, so these recovery rows
+        // were discounted by the verdict — neutral, not warn (same reasoning as Green below).
+        if loadOrigin { return .calm }
         // Warn is reserved for non-Green cards. On a Green card every negative
         // driver was, by definition, discounted by the verdict, so it reads
         // calm — otherwise an orange row would contradict the Green
@@ -367,10 +383,13 @@ extension ReadinessResult {
     }
 
     func driverDisplays(manual: ManualReadinessInputs = .default) -> [DriverDisplay] {
-        // Sick / high-pain keep their warn tone: resolveMessageState gives them priority over .redLoad.
-        let loadOriginRed = resolveMessageState(manual: manual) == .redLoad
+        // Sick / high-pain keep their warn tone: resolveMessageState gives them priority over both
+        // load states. Load-origin cards (red or yellow with a green recovery-only verdict) show
+        // their negative rows calm, through the one `loadOrigin` flag.
+        let state = resolveMessageState(manual: manual)
+        let loadOrigin = state == .redLoad || state == .yellowLoadMinorDrivers
         return drivers.map { d in
-            let s = sentiment(for: d, loadOriginRed: loadOriginRed)
+            let s = sentiment(for: d, loadOrigin: loadOrigin)
             return DriverDisplay(
                 label: d.label,
                 sentiment: s,
