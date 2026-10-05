@@ -14,7 +14,11 @@ enum ReadinessMessageState {
     case greenNoPush
     case yellowIsolated
     case yellowCluster
+    case yellowLoad     // yellow with zero negative recovery drivers → load-driven caution
+    case yellowLoadMinorDrivers  // yellow, recovery-only verdict green, but ≥1 sub-verdict negative driver
+    case gateHold       // rawTruth green, display held amber for one-day confirmation
     case red
+    case redLoad        // red with recovery-only verdict green → load-driven, not recovery-driven
     case sick
     case highPain
 }
@@ -25,7 +29,7 @@ extension ReadinessResult {
         switch driver.label {
         case "RHR", "Wrist Temp", "Respiratory Rate", "Pain", "Sick":
             return "\(driver.label) ↑"
-        case "HRV", "Sleep", "Sleep Quality", "SpO2":
+        case "HRV", "Sleep", "Sleep Efficiency", "SpO2":
             return "\(driver.label) ↓"
         default:
             return driver.label
@@ -60,12 +64,79 @@ extension ReadinessResult {
             }
             return "Several recovery signals off"
 
+        case .yellowLoad, .yellowLoadMinorDrivers:
+            // No negative recovery drivers (or only sub-verdict ones) — the caution is load, not recovery.
+            return "Elevated training load"
+
+        case .gateHold:
+            // Raw verdict is green; any drivers present are soft, non-verdict-moving.
+            if negatives.isEmpty {
+                return "Recovery aligned"
+            }
+            return "Minor watch item: \(negatives.prefix(2).map { driverDisplay($0) }.joined(separator: ", "))"
+
+        case .redLoad:
+            // Red reflects load, not recovery — same attribution as .yellowLoad.
+            return "Elevated training load"
+
         case .red, .sick, .highPain:
             if !negatives.isEmpty {
                 return negatives.map { driverDisplay($0) }.joined(separator: ", ")
             }
             return "Recovery compromised"
         }
+    }
+
+    /// Which copy state the card is in. Shared by presentation() and driverDisplays() so the
+    /// headline and the driver-row tone can never disagree about the state.
+    func resolveMessageState(manual: ManualReadinessInputs) -> ReadinessMessageState {
+        let negativeDrivers = drivers.filter { $0.isNegative }
+
+        return {
+            if manual.isSick {
+                return .sick
+            }
+
+            if manual.painLevel >= 7 {
+                return .highPain
+            }
+
+            if action == .red {
+                // Load-caused red: the load-stripped recovery verdict is green. nil (snapshots
+                // encoded before the field existed, widget decode) keeps the recovery-red copy.
+                return rawRecoveryTruth == .green ? .redLoad : .red
+            }
+
+            // Gate hold: raw verdict is green but the display is held amber for one-day
+            // confirmation. `action` reads green (see ReadinessEngine) while `truth` reads
+            // amber — narrate the split instead of a caution or a bare green.
+            if truth == .yellow && rawTruth == .green {
+                return .gateHold
+            }
+
+            if action == .yellow {
+                // Load-caused yellow: the load-stripped recovery verdict is green, so any negative
+                // drivers were discounted by it (sub-verdict). Same attribution as .redLoad.
+                // rawRecoveryTruth .yellow / .red / nil keeps the recovery routing below.
+                if rawRecoveryTruth == .green {
+                    return negativeDrivers.isEmpty ? .yellowLoad : .yellowLoadMinorDrivers
+                }
+
+                // count==0 is a load-driven yellow (no negative recovery drivers) — it must
+                // NOT fall into the recovery "cluster" copy the old ternary misrouted it to.
+                switch negativeDrivers.count {
+                case 0:  return .yellowLoad
+                case 1:  return .yellowIsolated
+                default: return .yellowCluster
+                }
+            }
+
+            if canPushKeyLift {
+                return .greenPush
+            }
+
+            return .greenNoPush
+        }()
     }
 
     func presentation(manual: ManualReadinessInputs) -> ReadinessPresentation {
@@ -76,29 +147,7 @@ extension ReadinessResult {
 
         let confidenceLine = "Confidence: \(confidenceLabel)"
 
-        let messageState: ReadinessMessageState = {
-            if manual.isSick {
-                return .sick
-            }
-
-            if manual.painLevel >= 7 {
-                return .highPain
-            }
-
-            if action == .red {
-                return .red
-            }
-
-            if action == .yellow {
-                return negativeDrivers.count == 1 ? .yellowIsolated : .yellowCluster
-            }
-
-            if canPushKeyLift {
-                return .greenPush
-            }
-
-            return .greenNoPush
-        }()
+        let messageState = resolveMessageState(manual: manual)
 
         let headline: String
         let subline: String
@@ -124,10 +173,38 @@ extension ReadinessResult {
             baseExplanation = "Multiple recovery systems are under strain. Use the lowest-cost version of training today, or take a recovery day."
             guidanceButtonTitle = "View recovery guidance"
 
+        case .redLoad:
+            headline = ReadinessRedLoadCopy.headline
+            subline = ReadinessRedLoadCopy.subline
+            baseExplanation = ReadinessRedLoadCopy.explanation
+            guidanceButtonTitle = "View training guidance"
+
         case .yellowCluster:
             headline = "Train with guardrails"
             subline = "Reduce effort today"
             baseExplanation = "Multiple recovery signals are outside their normal range. Run a controlled session: no grinders, no intensifiers, no extra volume."
+            guidanceButtonTitle = "View training guidance"
+
+        case .yellowLoad:
+            headline = "Train with guardrails"
+            subline = ReadinessLoadCopy.subline
+            baseExplanation = ReadinessLoadCopy.explanation
+            guidanceButtonTitle = "View training guidance"
+
+        case .yellowLoadMinorDrivers:
+            headline = "Train with guardrails"
+            subline = ReadinessLoadCopy.subline
+            baseExplanation = ReadinessLoadMinorDriversCopy.explanation(
+                negativeLabels: negativeDrivers.map { $0.label }
+            )
+            guidanceButtonTitle = "View training guidance"
+
+        case .gateHold:
+            // Deferred to the engine's single-source hold copy so the card and the Watch
+            // (which reads actionTitle/actionMessage) narrate the split identically.
+            headline = ReadinessHoldCopy.title
+            subline = ReadinessHoldCopy.subline
+            baseExplanation = ReadinessHoldCopy.message
             guidanceButtonTitle = "View training guidance"
 
         case .yellowIsolated:
@@ -186,7 +263,7 @@ extension ReadinessResult {
             return "HRV is down without a broader recovery collapse. Train with guardrails and avoid pushing."
         case "RHR":
             return "Resting heart rate is elevated while other signals are mostly stable. Use caution today."
-        case "Sleep", "Sleep Quality":
+        case "Sleep", "Sleep Efficiency":
             return "Sleep is compromised. Train if you feel okay, but keep effort controlled."
         case "SpO2":
             return "SpO2 is lower than usual, but this signal can be noisy. Watch for repeat patterns."
@@ -213,7 +290,7 @@ extension ReadinessResult {
             return "SpO2 is lower than usual, but this signal can be noisy. Watch for repeat patterns."
         case "RHR":
             return "Resting heart rate is mildly elevated, but the broader recovery picture is stable."
-        case "Sleep", "Sleep Quality":
+        case "Sleep", "Sleep Efficiency":
             return "Sleep is a little off, but the broader recovery picture is stable. Keep execution clean."
         default:
             return "One recovery signal is off, but the broader picture is stable. Train normally, but don’t chase hero sets."
@@ -236,8 +313,11 @@ extension ReadinessResult {
         let consecutiveDays: Int
     }
 
-    private func sentiment(for driver: ReadinessDriver) -> DriverSentiment {
+    private func sentiment(for driver: ReadinessDriver, loadOrigin: Bool) -> DriverSentiment {
         guard driver.isNegative else { return .positive }
+        // Load-caused red or yellow: the recovery-only verdict is green, so these recovery rows
+        // were discounted by the verdict — neutral, not warn (same reasoning as Green below).
+        if loadOrigin { return .calm }
         // Warn is reserved for non-Green cards. On a Green card every negative
         // driver was, by definition, discounted by the verdict, so it reads
         // calm — otherwise an orange row would contradict the Green
@@ -249,15 +329,21 @@ extension ReadinessResult {
     private func driverSubtitle(for driver: ReadinessDriver, sentiment: DriverSentiment) -> String {
         switch driver.label {
         case "HRV":
+            if sentiment == .positive {
+                // Non-negative HRV driver (above baseline). Must not inherit the
+                // negative-dip fallthrough — that put a below-baseline string under
+                // the green up-arrow.
+                return "Above your baseline — good sign."
+            }
             if sentiment == .warn {
                 return driver.consecutiveDays >= 2
                     ? "Below baseline \(driver.consecutiveDays) days running — watch recovery."
                     : "Below baseline enough to weigh on today's read."
             }
-            // Clamped single-day dip that didn't move the verdict.
+            // .calm: clamped single-day dip that didn't move the verdict.
             return "Slightly below your baseline — within normal range."
 
-        case "Sleep Quality":
+        case "Sleep Efficiency":
             return sleepQualitySubtitle()
 
         default:
@@ -266,7 +352,7 @@ extension ReadinessResult {
         }
     }
 
-    // The "Sleep Quality" readiness driver fires off the ENGINE's sleepEffScore,
+    // The "Sleep Efficiency" readiness driver fires off the ENGINE's sleepEffScore,
     // which is an EFFICIENCY signal (asleep / inBed vs baseline). So this row is
     // always about efficiency — the subtitle is anchored there and never renamed
     // to another axis (the driver isn't those) nor suppressed to "close to your
@@ -296,9 +382,14 @@ extension ReadinessResult {
             : "Lower sleep efficiency than your norm."
     }
 
-    func driverDisplays() -> [DriverDisplay] {
-        drivers.map { d in
-            let s = sentiment(for: d)
+    func driverDisplays(manual: ManualReadinessInputs = .default) -> [DriverDisplay] {
+        // Sick / high-pain keep their warn tone: resolveMessageState gives them priority over both
+        // load states. Load-origin cards (red or yellow with a green recovery-only verdict) show
+        // their negative rows calm, through the one `loadOrigin` flag.
+        let state = resolveMessageState(manual: manual)
+        let loadOrigin = state == .redLoad || state == .yellowLoadMinorDrivers
+        return drivers.map { d in
+            let s = sentiment(for: d, loadOrigin: loadOrigin)
             return DriverDisplay(
                 label: d.label,
                 sentiment: s,

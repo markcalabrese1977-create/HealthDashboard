@@ -411,6 +411,12 @@ struct DailyVerdictRecord: Codable, Equatable {
     let sleepEffLow: Bool
     let sick: Bool
 
+    // Load-stripped verdict: the ReadinessStatus that would result from recovery signals
+    // alone (loadMod = 0), using identical thresholds, cluster count, and force rules.
+    // Forward-only: old records decode absent key → rawTruth (conservative: disables the
+    // load-origin gate-skip for those days, matching the old no-skip behavior).
+    let rawRecoveryTruth: ReadinessStatus
+
     init(
         dateISO: String,
         rawTotal: Int,
@@ -424,7 +430,8 @@ struct DailyVerdictRecord: Codable, Equatable {
         tempUp03: Bool = false,
         rrUp10: Bool = false,
         sleepEffLow: Bool = false,
-        sick: Bool = false
+        sick: Bool = false,
+        rawRecoveryTruth: ReadinessStatus
     ) {
         self.dateISO = dateISO
         self.rawTotal = rawTotal
@@ -439,11 +446,13 @@ struct DailyVerdictRecord: Codable, Equatable {
         self.rrUp10 = rrUp10
         self.sleepEffLow = sleepEffLow
         self.sick = sick
+        self.rawRecoveryTruth = rawRecoveryTruth
     }
 
     private enum CodingKeys: String, CodingKey {
         case dateISO, rawTotal, rawRecovery, rawTruth
         case hrvDown10, hrvDownTrend, hrvConcern, rhrUp4, sleepShort1, tempUp03, rrUp10, sleepEffLow, sick
+        case rawRecoveryTruth
     }
 
     init(from decoder: Decoder) throws {
@@ -463,7 +472,58 @@ struct DailyVerdictRecord: Codable, Equatable {
         rrUp10 = try c.decodeIfPresent(Bool.self, forKey: .rrUp10) ?? false
         sleepEffLow = try c.decodeIfPresent(Bool.self, forKey: .sleepEffLow) ?? false
         sick = try c.decodeIfPresent(Bool.self, forKey: .sick) ?? false
+        // Old records default to rawTruth → gate-skip stays disabled for those days.
+        rawRecoveryTruth = try c.decodeIfPresent(ReadinessStatus.self, forKey: .rawRecoveryTruth) ?? rawTruth
     }
+}
+
+// MARK: - Gate-hold / load-caution copy (single source across surfaces)
+//
+// Hysteresis "Option A" holds a raw-green day at an amber DISPLAY for one-day confirmation.
+// On such a day `action` reads green (recommendation) while `truth` reads amber (badge).
+// These strings narrate that split and are authored ONCE here so both the engine-baked
+// actionTitle/actionMessage (which WatchRootView reads directly) and the card presentation
+// render identical copy. Worded to read gracefully on a cold start (absent yesterday) too:
+// never implies recovery is provisional or suppressed when history is merely new.
+enum ReadinessHoldCopy {
+    static let title = "Recovery looks good — confirming"
+    static let subline = "Confirming before clearing"
+    static let message = "Recovery is green today. We’re confirming it with another day of data before clearing the badge to green — train normally and keep it clean, no extra cost or hero sets."
+}
+
+// Yellow driven purely by training/activity LOAD (no negative recovery drivers). Attributes
+// the caution to load, not to recovery signals — the count==0 case the old
+// `count==1 ? isolated : cluster` ternary used to misroute into the recovery-cluster copy.
+enum ReadinessLoadCopy {
+    static let subline = "Load is elevated"
+    static let explanation = "Recovery signals look fine — today’s training and activity load is what’s pulling readiness down. Run a controlled session and avoid stacking more cost on top."
+}
+
+// Yellow driven by LOAD with a green recovery-only verdict (rawRecoveryTruth == .green) but one or
+// more negative recovery drivers that were too small to move that verdict. Same load framing as
+// ReadinessLoadCopy, plus a plain mention of the minor drivers (named as the driver rows name
+// them), instead of the recovery-caution copy.
+enum ReadinessLoadMinorDriversCopy {
+    /// "Sleep" / "HRV and Sleep" / "HRV, Sleep and RHR" (no serial comma).
+    static func joinedNames(_ labels: [String]) -> String {
+        guard let last = labels.last else { return "" }
+        if labels.count == 1 { return last }
+        return labels.dropLast().joined(separator: ", ") + " and " + last
+    }
+
+    static func explanation(negativeLabels: [String]) -> String {
+        let verb = negativeLabels.count == 1 ? "is" : "are"
+        return "Today’s training and activity load is what’s pulling readiness down. Recovery is within range, though \(joinedNames(negativeLabels)) \(verb) a bit off. Run a controlled session and avoid stacking more cost on top."
+    }
+}
+
+// Red driven purely by LOAD: action is red while the load-stripped recovery verdict
+// (rawRecoveryTruth) is green. Attributes the red to load, not recovery — the case the
+// generic .red copy ("Recovery is compromised") misdescribed.
+enum ReadinessRedLoadCopy {
+    static let headline = "Heavy load today"
+    static let subline = "Recovery signals are within range"
+    static let explanation = "Today’s training pushed load well above your usual. The red reflects load, not recovery. Keep the rest of today easy."
 }
 
 struct ReadinessResult: Codable, Equatable {
@@ -482,6 +542,8 @@ struct ReadinessResult: Codable, Equatable {
     var tempDelta: Double?              // today - baseline °C
     var rrDelta: Double?                // today - baseline br/min
     var effDelta: Double?               // today - baseline efficiency (0–1 scale)
+    var effCur: Double?                 // today's engine efficiency (asleep/inBed, guarded, 0–1)
+    var effBase: Double?                // engine's 28-day baseline efficiency (0–1)
     var cardioLoad: Double              // TRIMP (Bannister formula)
     var mechanicalLoad: Double          // EP intensity-weighted volume (UserDefaults shared store)
     // Additive, display-only: the engine already computes this internally (recoveryScore +
@@ -496,6 +558,12 @@ struct ReadinessResult: Codable, Equatable {
     //   .unavailable = it ran but had no scoreable sleep
     // Scalars only, so it rides WatchPayload with no size regression.
     var sleepQuality: SleepQualityResult? = nil
+
+    // Load-stripped verdict (recoveryScore alone, same thresholds/cluster rules) — the value the
+    // engine already computes and logs as DailyVerdictRecord.rawRecoveryTruth. Lets presentation
+    // tell a load-caused red (rawRecoveryTruth == .green) from a recovery-caused one.
+    //   nil = not populated (snapshots/payloads encoded before this field existed, `.empty`)
+    var rawRecoveryTruth: ReadinessStatus? = nil
 }
 extension ReadinessResult {
     /// Inert placeholder shown only for the instant between view creation and the
@@ -517,6 +585,8 @@ extension ReadinessResult {
         tempDelta: nil,
         rrDelta: nil,
         effDelta: nil,
+        effCur: nil,
+        effBase: nil,
         cardioLoad: 0,
         mechanicalLoad: 0
     )
@@ -560,6 +630,51 @@ extension ReadinessResult {
         return "Readiness is being shaped by \(driverSummary)."
     }
 }
+
+// MARK: - Widget Projection (dumb-mirror render payload)
+//
+// Carries EXACTLY what HealthDashboardWidget renders — nothing else. The widget must
+// never call ReadinessEngine.evaluate() itself (that both diverges from the app's
+// verdict and races the shared hysteresis gate log — see SharedStore.appendVerdictLog).
+// The app computes ReadinessResult once, projects the rendered fields into this struct,
+// and writes it here; the widget only ever reads and displays it.
+//
+// Series are [Double?], not [Double]: Sparkline (TrendUI.swift) relies on nil to render
+// a gap for a missing day rather than a false dip to zero — flattening to [Double] here
+// would corrupt that gap rendering, so the optional is preserved through encoding.
+struct WidgetProjection: Codable, Equatable {
+    let truth: ReadinessStatus
+    let flagCount: Int
+    let rhr: Int
+    let hrv: Int
+    let sleepHours: Double
+    let rhrSeries: [Double?]
+    let hrvSeries: [Double?]
+    let sleepSeries: [Double?]
+    let updatedAt: Date
+}
+
+// MARK: - Verdict persistence scope
+//
+// ReadinessEngine.evaluate() upserts the verdict log (SharedStore.appendVerdictLog) into the
+// slot for the WALL-CLOCK day, whatever day the evaluated history ends on. Callers that only
+// want the returned ReadinessResult (the weekly summary re-evaluates past days on every
+// SwiftUI body pass) wrap the call in `withSuppressedPersistence` so it never touches the log.
+// The default is persist: the live sites and direct callers (tests) are unaffected.
+//
+// `nonisolated` because the app target defaults to MainActor and this is read from any isolation
+// context. A synchronous `withValue` binding is visible at appendVerdictLog because evaluate()
+// calls it synchronously, with no Task or thread hop in between.
+nonisolated enum VerdictPersistence {
+    @TaskLocal static var isSuppressed = false
+
+    static func withSuppressedPersistence<T>(_ body: () throws -> T) rethrows -> T {
+        try $isSuppressed.withValue(true) {
+            try body()
+        }
+    }
+}
+
 // MARK: - App Group Store + Debug Hooks
 
 enum SharedStore {
@@ -567,6 +682,9 @@ enum SharedStore {
 
     // Snapshot
     static let snapshotKey = "health.snapshot.v2"
+
+    // Widget projection (dumb-mirror render payload; see WidgetProjection)
+    static let widgetProjectionKey = "health.widgetProjection.v1"
 
     // History (28d preferred; fallback to legacy 7d key)
     static let historyKey7  = "health.history.7d.v1"     // legacy
@@ -649,6 +767,36 @@ enum SharedStore {
             log("📤 save(snapshot) -> RHR=\(snapshot.restingHR) HRV=\(snapshot.hrv) Sleep=\(String(format: "%.1f", snapshot.sleepHours)) InBed=\(String(format: "%.1f", snapshot.sleepInBedHours)) updatedAt=\(snapshot.updatedAt)")
         } else {
             log("❌ save(snapshot) encode failed")
+        }
+    }
+
+    // MARK: Widget Projection
+
+    /// Returns nil if no projection has been written yet, or if the stored payload
+    /// fails to decode. Deliberately does NOT fall back to a fabricated verdict —
+    /// the widget must render an explicit "no data yet" state instead, never a guess.
+    static func loadWidgetProjection() -> WidgetProjection? {
+        guard
+            let d = defaults(),
+            let data = d.data(forKey: widgetProjectionKey),
+            let decoded = try? JSONDecoder().decode(WidgetProjection.self, from: data)
+        else {
+            log("📥 load(widgetProjection) -> nil (no data yet)")
+            return nil
+        }
+
+        log("📥 load(widgetProjection) -> truth=\(decoded.truth.rawValue) flags=\(decoded.flagCount) RHR=\(decoded.rhr) HRV=\(decoded.hrv) Sleep=\(String(format: "%.1f", decoded.sleepHours)) updatedAt=\(decoded.updatedAt)")
+        return decoded
+    }
+
+    static func saveWidgetProjection(_ projection: WidgetProjection) {
+        guard let d = defaults() else { return }
+
+        if let data = try? JSONEncoder().encode(projection) {
+            d.set(data, forKey: widgetProjectionKey)
+            log("📤 save(widgetProjection) -> truth=\(projection.truth.rawValue) flags=\(projection.flagCount) RHR=\(projection.rhr) HRV=\(projection.hrv) Sleep=\(String(format: "%.1f", projection.sleepHours)) updatedAt=\(projection.updatedAt)")
+        } else {
+            log("❌ save(widgetProjection) encode failed")
         }
     }
 
@@ -853,9 +1001,53 @@ enum SharedStore {
         return decoded
     }
 
+    /// Prints a human-readable summary of the persisted verdict log to the console.
+    /// Read-only: calls only loadVerdictLog(), touches no stored state.
+    static func dumpVerdictLog() {
+        let entries = loadVerdictLog()
+        let first = entries.first?.dateISO ?? "—"
+        let last  = entries.last?.dateISO  ?? "—"
+        log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        log("📋 VERDICT LOG — count=\(entries.count) range=\(first)…\(last)")
+        for e in entries {
+            var flags: [String] = []
+            if e.hrvDown10    { flags.append("hrvDown10") }
+            if e.hrvDownTrend { flags.append("hrvDownTrend") }
+            if e.hrvConcern   { flags.append("hrvConcern") }
+            if e.rhrUp4       { flags.append("rhrUp4") }
+            if e.sleepShort1  { flags.append("sleepShort1") }
+            if e.tempUp03     { flags.append("tempUp03") }
+            if e.rrUp10       { flags.append("rrUp10") }
+            if e.sleepEffLow  { flags.append("sleepEffLow") }
+            if e.sick         { flags.append("sick") }
+            let flagStr   = flags.isEmpty ? "—" : flags.joined(separator: ",")
+            let recovStr  = e.rawRecovery.map { String($0) } ?? "nil"
+            log("  \(e.dateISO) | \(e.rawTruth.rawValue) | total=\(e.rawTotal) | recovery=\(recovStr) | [\(flagStr)]")
+        }
+        log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    }
+
+    // Main app's own bundle id (project.pbxproj PRODUCT_BUNDLE_IDENTIFIER for the
+    // HealthDashboard target). The widget extension, watch app, and watch widget all
+    // have distinct, differently-suffixed ids and fall through to the no-op branch.
+    private static let mainAppBundleID = "com.calabrese.HealthDashboard"
+
     /// Upserts today's record and trims the log to the most recent 30 days.
     /// Always call with the *raw* computed verdict before the hysteresis gate is applied.
+    ///
+    /// Structurally main-app-only: the widget no longer calls ReadinessEngine.evaluate()
+    /// (see WidgetProjection), but this guard closes the door so no other extension can
+    /// reintroduce the same race by calling evaluate() directly.
     static func appendVerdictLog(_ record: DailyVerdictRecord) {
+        guard Bundle.main.bundleIdentifier == mainAppBundleID else {
+            log("⛔️ appendVerdictLog blocked — not the main app (bundleIdentifier=\(Bundle.main.bundleIdentifier ?? "nil"))")
+            return
+        }
+
+        // Weekly-summary (and any other result-only) evaluations: no load, no upsert, no
+        // trim, no UserDefaults write. See VerdictPersistence.
+        if VerdictPersistence.isSuppressed { return }
+
         guard let d = defaults() else { return }
 
         var log_ = loadVerdictLog()

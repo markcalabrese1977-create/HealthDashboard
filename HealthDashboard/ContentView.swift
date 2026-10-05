@@ -356,7 +356,7 @@ struct ContentView: View {
 
                             if !readiness.drivers.isEmpty {
                                 VStack(alignment: .leading, spacing: 8) {
-                                    let displays = readiness.driverDisplays()
+                                    let displays = readiness.driverDisplays(manual: manual)
                                     ForEach(Array(displays.enumerated()), id: \.offset) { index, display in
                                         DriverRow(display: display, onTap: { selectedMetric = $0 })
 
@@ -613,7 +613,7 @@ struct ContentView: View {
                                                                     delta: readiness.effDelta.map { $0 * 100 },
                                                                     deltaUnit: "%",
                                                                     higherIsBetter: true,
-                                                                    metric: .sleepEff,
+                                                                    metric: .sleepEfficiency,
                                                                     history: history,
                                                                     readiness: readiness,
                                                                     onTap: { selectedMetric = $0 }
@@ -882,8 +882,9 @@ struct ContentView: View {
                 dxaScans = SharedStore.loadDXAScans()
                 bodyMeasurements = SharedStore.loadBodyMeasurements()
                 // One explicit evaluation from cached history — holds until the
-                // post-fetch assignment in backfill7Days() replaces it.
-                readiness = ReadinessEngine.evaluate(history: history, manual: manual)
+                // post-fetch assignment in backfill7Days() replaces it. Cached history can still
+                // end yesterday on the first open of a day; that evaluation is shown but not persisted.
+                readiness = LiveEvaluationPolicy.evaluateForLive(history: history, manual: manual)
             }
             .sheet(isPresented: $showDXAForm) {
                 DXAFormView(initial: nil) { scan in
@@ -935,6 +936,20 @@ struct ContentView: View {
         var reeval = ReadinessEngine.evaluate(history: history, manual: manual)
         reeval.sleepQuality = readiness.sleepQuality
         readiness = reeval
+
+        SharedStore.saveWidgetProjection(
+            WidgetProjection(
+                truth: readiness.truth,
+                flagCount: readiness.flags.count,
+                rhr: snapshot.restingHR,
+                hrv: snapshot.hrv,
+                sleepHours: snapshot.sleepHours,
+                rhrSeries: history.suffix(28).map { $0.restingHR },
+                hrvSeries: history.suffix(28).map { $0.hrvMS },
+                sleepSeries: history.suffix(28).map { $0.sleepHours },
+                updatedAt: snapshot.updatedAt
+            )
+        )
 
         WidgetCenter.shared.reloadTimelines(ofKind: "HealthDashboardWidget")
     }
@@ -1029,6 +1044,20 @@ struct ContentView: View {
                 )
                 readiness = evaluated
 
+                SharedStore.saveWidgetProjection(
+                    WidgetProjection(
+                        truth: readiness.truth,
+                        flagCount: readiness.flags.count,
+                        rhr: snapshot.restingHR,
+                        hrv: snapshot.hrv,
+                        sleepHours: snapshot.sleepHours,
+                        rhrSeries: history.suffix(28).map { $0.restingHR },
+                        hrvSeries: history.suffix(28).map { $0.hrvMS },
+                        sleepSeries: history.suffix(28).map { $0.sleepHours },
+                        updatedAt: snapshot.updatedAt
+                    )
+                )
+
                 // Push the result to the Watch (if paired) — exactly once per refresh
                 // cycle, right after the engine has run against the freshest history.
                 let payload = WatchPayload(
@@ -1045,6 +1074,7 @@ struct ContentView: View {
             // purely for logging, doubling the "load() called N times per launch" count
             // for no functional reason since reloadTimelines doesn't change the stored data.
             SharedStore.debugDump(tag: "AFTER Backfill 7 Days")
+            SharedStore.dumpVerdictLog()
 
         } catch {
             await MainActor.run {
@@ -1057,10 +1087,22 @@ struct ContentView: View {
     private func refreshIfStale(maxAgeSeconds: TimeInterval) async {
         guard !isRefreshing else { return }
 
+        let previousUpdatedAt = snapshot.updatedAt
+
         await MainActor.run {
             snapshot = SharedStore.load()
             history = SharedStore.loadHistory()
             manual = SharedStore.loadManual()
+
+            // A background delivery (hkObserver) can save newer data while this view is on screen;
+            // nothing else re-evaluates `readiness`, so the card would keep the older result.
+            // Display-only: the delivery already persisted its own verdict.
+            if LiveEvaluationPolicy.needsReevaluation(previousUpdatedAt: previousUpdatedAt,
+                                                      currentUpdatedAt: snapshot.updatedAt) {
+                var refreshed = LiveEvaluationPolicy.evaluateForDisplay(history: history, manual: manual)
+                refreshed.sleepQuality = readiness.sleepQuality   // not computed by the engine; keep the last composite
+                readiness = refreshed
+            }
         }
 
         let age = Date().timeIntervalSince(snapshot.updatedAt)
@@ -1442,12 +1484,13 @@ fileprivate struct BodyRow: View {
     }
 }
 
-fileprivate func healthMetric(forDriverLabel label: String) -> HealthMetric? {
+// internal (not fileprivate) so driver-label → detail-view routing is unit-testable.
+func healthMetric(forDriverLabel label: String) -> HealthMetric? {
     switch label {
     case "RHR":               return .rhr
     case "HRV":                return .hrv
     case "Sleep":              return .sleep
-    case "Sleep Quality":      return .sleepEff
+    case "Sleep Efficiency":   return .sleepEfficiency
     case "Respiratory Rate":  return .respRate
     case "Wrist Temp":         return .wristTemp
     case "SpO2":                return .spo2

@@ -6,6 +6,20 @@ enum ReadinessEngine {
     private static var engineRunCount = 0
     #endif
 
+    // Shared guard-and-clamp computation used by evaluate() and HealthMetric.values(from:).
+    // Guards: both values present, meaningful magnitude, gap ≥ 5 min, gap ≤ 2 h.
+    // Returns nil when any guard fails; caller treats nil as "no data for this night."
+    static func efficiency(asleep: Double?, inBed: Double?) -> Double? {
+        guard let a = asleep, let b = inBed else { return nil }
+        guard a >= 3.0, b >= 4.0 else { return nil }
+        let minGapHours = 0.08   // ~5 minutes
+        guard b >= a + minGapHours else { return nil }
+        let maxGapHours = 2.0
+        guard (b - a) <= maxGapHours else { return nil }
+        let e = a / b
+        return max(0.0, min(1.2, e))
+    }
+
     static func evaluate(history: [DailyHealthPoint], manual: ManualReadinessInputs) -> ReadinessResult {
 
         #if DEBUG
@@ -87,24 +101,8 @@ enum ReadinessEngine {
         // Sleep target: simple and stable
         let sleepTarget = max(7.0, sleepBase ?? 7.0)
 
-        // Sleep efficiency baseline (proxy for fragmentation)
-        // Only consider nights with meaningful in-bed time.
-        func efficiency(asleep: Double?, inBed: Double?) -> Double? {
-            guard let a = asleep, let b = inBed else { return nil }
-            guard a >= 3.0, b >= 4.0 else { return nil }
-
-            let minGapHours = 0.08   // ~5 minutes
-            guard b >= a + minGapHours else { return nil }
-
-            let maxGapHours = 2.0
-            guard (b - a) <= maxGapHours else { return nil }
-
-            let e = a / b
-            return max(0.0, min(1.2, e))
-        }
-
         let effBase = median(
-            baselineSlice.compactMap { efficiency(asleep: $0.sleepHours, inBed: $0.sleepInBedHours) }
+            baselineSlice.compactMap { ReadinessEngine.efficiency(asleep: $0.sleepHours, inBed: $0.sleepInBedHours) }
         )
 
 
@@ -191,7 +189,7 @@ enum ReadinessEngine {
         // Retained as cluster flag input only.
         // Sleep efficiency score (quality proxy)
         // Goal: catch fragmented nights even when duration looks ok.
-        if let effCur = efficiency(asleep: today?.sleepHours, inBed: today?.sleepInBedHours),
+        if let effCur = ReadinessEngine.efficiency(asleep: today?.sleepHours, inBed: today?.sleepInBedHours),
            let base = effBase {
             let d = effCur - base
             // Keep this conservative: we only penalize obvious deterioration.
@@ -243,36 +241,12 @@ enum ReadinessEngine {
         let sickScore: Int = manual.isSick ? -4 : 0
         if manual.isSick { flags.append("Sick") }
 
-        let hrvBufferedByStrongRecovery: Bool = {
-            guard hrvScore == -2 else { return false }
-
-            let rhrStableOrGood = rhrScore >= 0
-            let sleepStrong = sleepScore >= 0
-            let sleepQualityGood = sleepEffScore >= 0
-            let rrStable = rrScore >= 0
-            let tempStable = tempScore >= 0
-            let noManualProblem = painScore == 0 && sickScore == 0
-
-            return rhrStableOrGood &&
-                   sleepStrong &&
-                   sleepQualityGood &&
-                   rrStable &&
-                   tempStable &&
-                   noManualProblem
-        }()
-
-        let adjustedHRVScore: Int = {
-            if hrvScore == -2 && hrvBufferedByStrongRecovery {
-                return -1
-            }
-
-            return hrvScore
-        }()
-
         // var: convergenceBonus (below, after clusterCount is known) mutates this
         // before `total` is assembled.
+        // hrvScore is already clamped to -1 at its computation site (line 144), so no
+        // secondary buffer is needed here — the clamp is the effective floor.
         var recoveryScore =
-            adjustedHRVScore + rhrScore + sleepScore + sleepEffScore + tempScore + spo2Score + rrScore
+            hrvScore + rhrScore + sleepScore + sleepEffScore + tempScore + spo2Score + rrScore
             + painScore + sickScore
 
         // MARK: - Load / Stress modifier (separate from recovery)
@@ -380,7 +354,7 @@ enum ReadinessEngine {
         }()
 
         let sleepEffLow: Bool = {
-            guard let effCur = efficiency(asleep: today?.sleepHours, inBed: today?.sleepInBedHours),
+            guard let effCur = ReadinessEngine.efficiency(asleep: today?.sleepHours, inBed: today?.sleepInBedHours),
                   let base = effBase else { return false }
 
             // Sleep efficiency is noisy. Only treat it as a cluster/push-blocking signal
@@ -421,20 +395,29 @@ enum ReadinessEngine {
 
         // Keep your preference: do not Yellow from one moderate negative.
         let yellowTotalCutoff = -4
-        let redTotalCutoff = -7 
+        let redTotalCutoff = -7
 
-        var truth: ReadinessStatus
-        if total <= redTotalCutoff {
-            truth = .red
-        } else if clusterCount >= 2 || total <= yellowTotalCutoff {
-            truth = .yellow
-        } else {
-            truth = .green
+        // Shared verdict logic: thresholds, cluster count, and force rules are identical
+        // whether load is included or excluded. Called twice — once with total (full verdict)
+        // and once with recoveryScore alone (load-stripped verdict for gate-origin detection).
+        func verdictFor(_ score: Int) -> ReadinessStatus {
+            var v: ReadinessStatus
+            if score <= redTotalCutoff {
+                v = .red
+            } else if clusterCount >= 2 || score <= yellowTotalCutoff {
+                v = .yellow
+            } else {
+                v = .green
+            }
+            if forceRed { v = .red }
+            else if forceYellow, v != .red { v = .yellow }
+            return v
         }
 
-        // Overrides stay authoritative
-        if forceRed { truth = .red }
-        else if forceYellow, truth != .red { truth = .yellow }
+        var truth = verdictFor(total)
+        // Load-stripped verdict: same rules, loadMod excluded. Stored in the log so the
+        // hysteresis gate can distinguish a load-origin yellow from a recovery-driven one.
+        let rawRecoveryTruth = verdictFor(recoveryScore)
 
         // MARK: - Hysteresis gate (Option A: consecutive-day confirmation for Yellow→Green)
         // Raw computed verdict is stored to the log unconditionally every run.
@@ -467,7 +450,8 @@ enum ReadinessEngine {
                 tempUp03: tempUp03,
                 rrUp10: rrUp10,
                 sleepEffLow: sleepEffLow,
-                sick: sickFlag
+                sick: sickFlag,
+                rawRecoveryTruth: rawRecoveryTruth
             )
         )
 
@@ -484,22 +468,42 @@ enum ReadinessEngine {
 
             let yesterdayRecord = log_.first(where: { $0.dateISO == yesterdayISO })
 
-            if yesterdayRecord?.rawTruth != .green {
-                // Yesterday was Yellow or Red (or absent — first-run, treat as unconfirmed).
-                // Hold at Yellow for one more day.
+            if let yesterday = yesterdayRecord {
+                let yWasYellow = yesterday.rawTruth != .green
+                let yWasLoadOrigin = yesterday.rawRecoveryTruth == .green
+
+                if yWasYellow && !yWasLoadOrigin {
+                    // Recovery-driven yellow: keep 1-day confirmation hold.
+                    truth = .yellow
+                    #if DEBUG
+                    print("🔒 Hysteresis gate: raw=green, yesterday=\(yesterday.rawTruth.rawValue) origin=recovery → displayed=yellow (unconfirmed)")
+                    #endif
+                } else if yWasYellow && yWasLoadOrigin {
+                    // Load-origin yellow: recovery was already clean; nothing to confirm.
+                    #if DEBUG
+                    print("🔓 Hysteresis gate: raw=green, yesterday=yellow (load-origin) → displayed=green (no hold)")
+                    #endif
+                } else {
+                    // Yesterday was green.
+                    #if DEBUG
+                    print("✅ Hysteresis gate: raw=green, yesterday=green → displayed=green (confirmed)")
+                    #endif
+                }
+            } else {
+                // Absent: first-run or no history — treat as unconfirmed, keep hold.
                 truth = .yellow
                 #if DEBUG
-                print("🔒 Hysteresis gate: raw=green, yesterday=\(yesterdayRecord?.rawTruth.rawValue ?? "nil") → displayed=yellow (unconfirmed)")
-                #endif
-            } else {
-                #if DEBUG
-                print("✅ Hysteresis gate: raw=green, yesterday=green → displayed=green (confirmed)")
+                print("🔒 Hysteresis gate: raw=green, yesterday=nil (first-run) → displayed=yellow (unconfirmed)")
                 #endif
             }
         }
 
-        // Action defaults to truth; hard-bias to reduce cost if sick/high pain.
-        var action = truth
+        // Action derives from the RAW verdict, not the hysteresis-gated display truth.
+        // A pure display-hold (rawTruth green, truth held amber for one-day confirmation)
+        // must not issue a behavioral "reduce effort" recommendation — only genuine caution
+        // (load- or recovery-driven yellow/red, where rawTruth itself is not green) stays
+        // authoritative. Sick/high-pain still hard-bias to reduce cost.
+        var action = rawTruth
         if manual.isSick || pain >= 7 { action = .red }
 
         // “Push permission” (general)
@@ -514,28 +518,61 @@ enum ReadinessEngine {
             && !manual.isSick
             && loadMod >= -1
 
-        // Output strings
+        // Output strings. Single source of truth: the card (ReadinessPresentation) and the
+        // Watch (WatchRootView reads actionTitle/actionMessage directly off the result) both
+        // inherit these — so the gate-hold narration is authored HERE, not in presentation().
         let actionTitle: String
         let actionMessage: String
 
-        switch action {
-        case .green:
-            actionTitle = canPushKeyLift ? "Train normally (push allowed)" : "Train normally"
-            actionMessage = canPushKeyLift
-                ? "Run plan as written. You may push one key lift if form stays clean and effort is honest."
-                : "Run plan as written. Keep it clean—no extra cost or hero sets today."
-        case .yellow:
-            actionTitle = "Train with guardrails"
-            actionMessage = """
-            Run the plan, but avoid top-end effort. Stay honest with RIR and skip any push or intensifier work. If something feels off early, adjust instead of forcing it.
-            """
-        case .red:
-            actionTitle = "Reduce cost today"
-            actionMessage = "Reduce: choose the lowest-cost version of training (lighter loads and/or fewer sets). No intensifiers, no grinders."
+        // Gate hold: raw verdict is green but the display is held amber for one-day
+        // confirmation. action is green here (see above) while truth is amber — narrate the
+        // split rather than emitting a bare-green "train normally" with no reason for the amber.
+        let gateHoldGreen = (action == .green && truth == .yellow)
+
+        if gateHoldGreen {
+            actionTitle = ReadinessHoldCopy.title
+            actionMessage = ReadinessHoldCopy.message
+        } else {
+            switch action {
+            case .green:
+                actionTitle = canPushKeyLift ? "Train normally (push allowed)" : "Train normally"
+                actionMessage = canPushKeyLift
+                    ? "Run plan as written. You may push one key lift if form stays clean and effort is honest."
+                    : "Run plan as written. Keep it clean—no extra cost or hero sets today."
+            case .yellow:
+                actionTitle = "Train with guardrails"
+                actionMessage = """
+                Run the plan, but avoid top-end effort. Stay honest with RIR and skip any push or intensifier work. If something feels off early, adjust instead of forcing it.
+                """
+            case .red:
+                actionTitle = "Reduce cost today"
+                actionMessage = "Reduce: choose the lowest-cost version of training (lighter loads and/or fewer sets). No intensifiers, no grinders."
+            }
         }
 
         // Keep flags short and useful
         let uniqueFlags = Array(Dictionary(grouping: flags, by: { $0 }).keys).prefix(6)
+
+        // Signal deltas returned in ReadinessResult (and read by hrvDeltaMS below). Declared
+        // outside #if DEBUG so Release compiles; same arithmetic as the DEBUG-only versions
+        // they replace.
+        let hrvDeltaPct: Double? = {
+            guard let cur = today?.hrvMS, let base = hrvBase, base > 0 else { return nil }
+            return (cur - base) / base
+        }()
+        let rhrDeltaAbs: Double? = {
+            guard let cur = today?.restingHR, let base = rhrBase else { return nil }
+            return cur - base
+        }()
+        let sleepDeltaAbs: Double? = today?.sleepHours.map { $0 - sleepTarget }
+        let tempDeltaAbs: Double? = {
+            guard let cur = today?.wristTempDeltaC, let base = tempBase else { return nil }
+            return cur - base
+        }()
+        let rrDeltaAbs: Double? = {
+            guard let cur = today?.respiratoryRate, let base = rrBase else { return nil }
+            return cur - base
+        }()
 
         // DEBUG: explain readiness inputs + scoring
         #if DEBUG
@@ -546,17 +583,12 @@ enum ReadinessEngine {
         let rhrCur = today?.restingHR
         let sleepCur = today?.sleepHours
         let inBedCur = today?.sleepInBedHours
-        let effCur = efficiency(asleep: sleepCur, inBed: inBedCur)
+        let effCur = ReadinessEngine.efficiency(asleep: sleepCur, inBed: inBedCur)
         let tempCur = today?.wristTempDeltaC
         let spo2Cur = today?.spo2Pct
         let rrCur = today?.respiratoryRate
 
-        let hrvDeltaPct: Double? = (hrvCur != nil && hrvBase != nil && hrvBase! > 0) ? ((hrvCur! - hrvBase!) / hrvBase!) : nil
-        let rhrDeltaAbs: Double? = (rhrCur != nil && rhrBase != nil) ? (rhrCur! - rhrBase!) : nil
-        let sleepDeltaAbs: Double? = (sleepCur != nil) ? (sleepCur! - sleepTarget) : nil
-        let tempDeltaAbs: Double? = (tempCur != nil && tempBase != nil) ? (tempCur! - tempBase!) : nil
         let spo2DeltaAbs: Double? = (spo2Cur != nil && spo2Base != nil) ? (spo2Cur! - spo2Base!) : nil
-        let rrDeltaAbs: Double? = (rrCur != nil && rrBase != nil) ? (rrCur! - rrBase!) : nil
         let effDeltaAbs: Double? = (effCur != nil && effBase != nil) ? (effCur! - effBase!) : nil
 
         #if DEBUG
@@ -572,10 +604,10 @@ enum ReadinessEngine {
         print("  Today:   HRV=\(fmt(hrvCur)) RHR=\(fmt(rhrCur)) Sleep=\(fmt(sleepCur)) InBed=\(fmt(inBedCur)) Eff=\(fmt(effCur)) RR=\(fmt(rrCur)) Temp=\(fmt(tempCur)) SpO2=\(fmt(spo2Cur))")
         print("  Base:    HRV=\(fmt(hrvBase)) RHR=\(fmt(rhrBase)) SleepBase=\(fmt(sleepBase)) SleepTarget=\(String(format: "%.2f", sleepTarget)) EffBase=\(fmt(effBase)) RRBase=\(fmt(rrBase)) TempBase=\(fmt(tempBase)) SpO2=\(fmt(spo2Base))")
         print("  Δ:       HRV=\(fmtPct(hrvDeltaPct)) RHR=\(fmt(rhrDeltaAbs)) Sleep=\(fmt(sleepDeltaAbs)) Eff=\(fmt(effDeltaAbs)) RR=\(fmt(rrDeltaAbs)) Temp=\(fmt(tempDeltaAbs)) SpO2=\(fmt(spo2DeltaAbs))")
-        print("  Scores:  HRV(raw)=\(hrvScore) HRV(adj)=\(adjustedHRVScore) buffered=\(hrvBufferedByStrongRecovery) RHR=\(rhrScore) Sleep=\(sleepScore) Eff=\(sleepEffScore) RR=\(rrScore) Temp=\(tempScore) SpO2=\(spo2Score) pain=\(painScore) sick=\(sickScore) recovery=\(recoveryScore) load=\(loadMod) total=\(total)")
+        print("  Scores:  HRV=\(hrvScore) RHR=\(rhrScore) Sleep=\(sleepScore) Eff=\(sleepEffScore) RR=\(rrScore) Temp=\(tempScore) SpO2=\(spo2Score) pain=\(painScore) sick=\(sickScore) recovery=\(recoveryScore) load=\(loadMod) total=\(total)")
         print("  Cluster: hrvDown10=\(hrvDown10) hrvTrend=\(hrvDownTrend) hrvConcern=\(hrvConcern) rhrUp3=\(rhrUp3) sleepShort1=\(sleepShort1) sleepEffLow=\(sleepEffLow) rrUp10=\(rrUp10) tempUp03=\(tempUp03) sick=\(sickFlag) count=\(clusterCount) forceY=\(forceYellow) forceR=\(forceRed)")
         print("  Convergence: bonus=\(convergenceBonus) clusterCount=\(clusterCount)")
-        print("  Output:  truth=\(truth.title) action=\(action.title) canPush=\(canPushKeyLift)")
+        print("  Output:  truth=\(truth.title) rawRecoveryTruth=\(rawRecoveryTruth.title) action=\(action.title) canPush=\(canPushKeyLift)")
         #endif
 
         
@@ -585,8 +617,10 @@ enum ReadinessEngine {
                     return pct * base
                 }()
 
+        let effCurForResult = ReadinessEngine.efficiency(asleep: today?.sleepHours, inBed: today?.sleepInBedHours)
+
         let effDeltaForResult: Double? = {
-                            guard let cur = efficiency(asleep: today?.sleepHours, inBed: today?.sleepInBedHours),
+                            guard let cur = effCurForResult,
                                   let base = effBase else { return nil }
                             return cur - base
                         }()
@@ -658,7 +692,8 @@ enum ReadinessEngine {
             case ("RHR", true):               return "Elevated vs baseline — may reflect fatigue, illness, or strain."
             case ("RHR", false):              return "Below baseline — a positive recovery signal."
             case ("Sleep", true):             return "Short vs target — recovery and performance both take a hit."
-            case ("Sleep Quality", true):     return "Fragmented sleep — even with adequate duration."
+            case ("Sleep", false):            return "Above your target — a strong recovery night."
+            case ("Sleep Efficiency", true):  return "Fragmented sleep — even with adequate duration."
             case ("Respiratory Rate", true):  return "Elevated overnight — frequently precedes other symptoms."
             case ("Wrist Temp", true):        return "Above baseline — worth watching for illness or inflammation."
             case ("SpO2", true):              return "Lower than usual overnight — can be noisy, watch for repeat patterns."
@@ -691,10 +726,14 @@ enum ReadinessEngine {
             )
         }
 
-        addDriver("HRV", adjustedHRVScore, consecutiveFlag: \.hrvDown10)
+        addDriver("HRV", hrvScore, consecutiveFlag: \.hrvDown10)
         addDriver("RHR", rhrScore, consecutiveFlag: \.rhrUp4)
         addDriver("Sleep", sleepScore, consecutiveFlag: \.sleepShort1)
-        addDriver("Sleep Quality", sleepEffScore, consecutiveFlag: \.sleepEffLow)
+        // Label is "Sleep Efficiency" (not "Sleep Quality") so the readiness driver row
+        // doesn't collide with the SleepQualityEngine composite tile, which is titled
+        // "Sleep Quality" and can validly show the opposite verdict (they're different
+        // metrics: engine efficiency vs multi-axis composite). Still fires off sleepEffScore.
+        addDriver("Sleep Efficiency", sleepEffScore, consecutiveFlag: \.sleepEffLow)
         addDriver("Respiratory Rate", rrScore, consecutiveFlag: \.rrUp10)
         addDriver("Wrist Temp", tempScore, consecutiveFlag: \.tempUp03)
         addDriver("SpO2", spo2Score)
@@ -724,9 +763,12 @@ enum ReadinessEngine {
             tempDelta: tempDeltaAbs,
             rrDelta: rrDeltaAbs,
             effDelta: effDeltaForResult,
+            effCur: effCurForResult,
+            effBase: effBase,
             cardioLoad: cardioLoad,
             mechanicalLoad: mechanicalLoad,
-            totalScore: total
+            totalScore: total,
+            rawRecoveryTruth: rawRecoveryTruth
         )
     }
 }

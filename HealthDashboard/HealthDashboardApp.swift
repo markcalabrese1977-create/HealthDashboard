@@ -116,6 +116,29 @@ struct HealthDashboardApp: App {
 
                         await SharedStore.save(snap)
                         await SharedStore.saveHistory(points)
+
+                        // This path has no @State readiness to reuse (headless background
+                        // delivery, no ContentView on screen) — evaluate here so the widget
+                        // projection stays current even when the app is never foregrounded.
+                        // Safe to run from the main app process (this is a Task.detached off
+                        // the app's own HKObserverQuery, not an extension) — see the
+                        // main-app-only guard on appendVerdictLog.
+                        let manual = await SharedStore.loadManual()
+                        let evaluated = ReadinessEngine.evaluate(history: points, manual: manual)
+                        await SharedStore.saveWidgetProjection(
+                            WidgetProjection(
+                                truth: evaluated.truth,
+                                flagCount: evaluated.flags.count,
+                                rhr: snap.restingHR,
+                                hrv: snap.hrv,
+                                sleepHours: snap.sleepHours,
+                                rhrSeries: points.suffix(28).map { $0.restingHR },
+                                hrvSeries: points.suffix(28).map { $0.hrvMS },
+                                sleepSeries: points.suffix(28).map { $0.sleepHours },
+                                updatedAt: snap.updatedAt
+                            )
+                        )
+
                         WidgetCenter.shared.reloadTimelines(ofKind: "HealthDashboardWidget")
 
                     } catch {

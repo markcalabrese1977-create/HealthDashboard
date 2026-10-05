@@ -190,7 +190,11 @@ final class ReadinessEngineTests: XCTestCase {
         XCTAssertNotEqual(result.action, .red)
     }
 
-    func testStrongRecoveryBuffersLowHRV() {
+    // Previously named testStrongRecoveryBuffersLowHRV. The dead buffer
+    // (hrvBufferedByStrongRecovery) was removed — it was unreachable because the -1 clamp
+    // at line 144 fired before the guard could see hrvScore == -2. The clamp is what bounds
+    // low HRV; this test's assertions hold for the same reason they always did.
+    func testLowHRVBoundedByClampWhenOtherSignalsStrong() {
         var hist = (1...24).map { point(day: $0, hrv: 30) }
         hist += [
             point(day: 25, hrv: 24), point(day: 26, hrv: 24),
@@ -201,6 +205,26 @@ final class ReadinessEngineTests: XCTestCase {
         XCTAssertNotEqual(result.truth, .red)
         XCTAssertTrue(result.truth == .green || result.truth == .yellow, "Expected green or yellow, got \(result.truth)")
         XCTAssertTrue(result.driverSummary.contains("HRV"), "Driver should include HRV")
+    }
+
+    // Pins that deleting the dead buffer (hrvBufferedByStrongRecovery) changed nothing:
+    // HRV in the raw -2 band (~-20% delta) with all other signals at baseline contributes
+    // exactly -1 to recoveryScore (the clamp floor), not -2. The buffer only ever targeted
+    // the -2 case, but the clamp prevented -2 from reaching the buffer. Removing both
+    // leaves behavior identical on all inputs.
+    func testHRVBufferRemovalIsNoOp() {
+        // 27 neutral baseline days (hrv=30) + today at hrv=24 → delta = -20%,
+        // which is in the (-0.30)...(-0.12) raw -2 band. All other signals at baseline
+        // so their scores are 0. This is the exact fixture the buffer was designed for.
+        let hist = history(today: point(day: 28, hrv: 24))
+        let result = eval(hist)
+        // Clamp produces -1, not -2. Driver impact must be 1, not 2.
+        let hrvDriver = result.drivers.first(where: { $0.label == "HRV" })
+        XCTAssertNotNil(hrvDriver, "HRV driver must be present when HRV is depressed")
+        XCTAssertEqual(hrvDriver?.impact, 1, "HRV impact must be 1 (clamped -1), not 2 (raw -2)")
+        XCTAssertTrue(hrvDriver?.isNegative == true)
+        // recoveryScore = -1; no cluster force → verdict must be green
+        XCTAssertEqual(result.rawTruth, .green)
     }
 
     func testHRVTrendPlusAnotherSignalForcesYellow() {
@@ -607,6 +631,55 @@ final class ReadinessEngineTests: XCTestCase {
         XCTAssertEqual(r.driverDisplays().first?.sentiment, .positive)
     }
 
+    // The gap that shipped the bug: the above test checked ONLY the sentiment enum,
+    // never the subtitle. A positive HRV driver was rendering the calm/negative-dip
+    // fallthrough string ("...below your baseline...") under the green up-arrow.
+    func testHRVPositiveRendersPositiveCopyNotCalmFallback() {
+        let r = card(action: .green, drivers: [driver("HRV", impact: 1, isNegative: false)])
+        let display = r.driverDisplays().first!
+        XCTAssertEqual(display.sentiment, .positive)
+        XCTAssertEqual(display.subtitle, "Above your baseline — good sign.")
+        // Must NOT inherit the negative-dip fallthrough.
+        XCTAssertNotEqual(display.subtitle, "Slightly below your baseline — within normal range.")
+        XCTAssertFalse(display.subtitle.lowercased().contains("below"),
+                       "Positive HRV row must not describe a below-baseline dip: \(display.subtitle)")
+    }
+
+    // Exhaustiveness: all three DriverSentiment cases for HRV must produce distinct,
+    // non-fallthrough subtitles — so no future sentiment silently reuses another's copy.
+    func testHRVAllThreeSentimentsProduceDistinctSubtitles() {
+        let positive = card(action: .green,
+                            drivers: [driver("HRV", impact: 1, isNegative: false)])
+            .driverDisplays().first!
+        let calm = card(action: .green,
+                        drivers: [driver("HRV", impact: 1, isNegative: true)])
+            .driverDisplays().first!
+        let warn = card(action: .yellow,
+                        drivers: [driver("HRV", impact: 1, isNegative: true)])
+            .driverDisplays().first!
+
+        XCTAssertEqual(positive.sentiment, .positive)
+        XCTAssertEqual(calm.sentiment, .calm)
+        XCTAssertEqual(warn.sentiment, .warn)
+
+        let subtitles = Set([positive.subtitle, calm.subtitle, warn.subtitle])
+        XCTAssertEqual(subtitles.count, 3,
+                       "Each HRV sentiment must own a distinct subtitle, not fall through to another's")
+        XCTAssertTrue(positive.subtitle.contains("Above"))
+        XCTAssertTrue(calm.subtitle.contains("within normal range"))
+        XCTAssertTrue(warn.subtitle.contains("weigh on today's read"))
+    }
+
+    // Guards the invariant behind "Sleep Efficiency .positive is unreachable": the engine's
+    // sleepEffScore is 0 or -1 only (no positive scoring), and addDriver drops score==0,
+    // so a Sleep Efficiency driver is always negative. If that ever changes, sleepQualitySubtitle()
+    // (negative-worded, sentiment-blind) would start contradicting a positive glyph — catch it here.
+    func testEngineNeverProducesPositiveSleepEfficiencyDriver() {
+        let r = eval(history(today: point(day: 28)))
+        XCTAssertFalse(r.drivers.contains { $0.label == "Sleep Efficiency" && !$0.isNegative },
+                       "A non-negative Sleep Efficiency driver would reach the negative-only efficiency subtitle")
+    }
+
     // The flagged interaction: Green + sustained (streak>=2) down-driver must NOT put a
     // warn/orange row under the "not enough to change today's call" reconciliation line.
     func testGreenWithSustainedDownDriverDoesNotContradict() {
@@ -619,12 +692,63 @@ final class ReadinessEngineTests: XCTestCase {
                        "No warn row may coexist with a Green reconciliation line")
     }
 
+    // Label-collision (driver vs composite tile) ------------------------------------
+
+    // The reported bug: driver row "Lower sleep efficiency than your norm" (orange/down)
+    // sat inches from the composite tile "Sleep Quality: Excellent 91/100" (green/up) —
+    // same label, opposite verdict, both individually correct. The fix un-collides the
+    // NAMES: the driver is now "Sleep Efficiency", distinct from the composite's tile
+    // title ("Sleep Quality"), so a legitimate divergence no longer reads as a contradiction.
+    func testSleepEfficiencyDriverLabelDistinctFromCompositeTile() {
+        // Engine efficiency driver fires negative while the composite is Excellent/high —
+        // exactly the valid divergence from the screenshot.
+        let sleep = sleepResult(verdict: .excellent, composite: 91,
+                                axes: [(.efficiency, 70), (.fragmentation, 95),
+                                       (.duration, 92), (.architecture, 90), (.consistency, 93)])
+        let r = card(action: .green,
+                     drivers: [driver("Sleep Efficiency", impact: 1, isNegative: true)],
+                     sleep: sleep)
+        let display = r.driverDisplays().first!
+
+        // Driver keeps its (correct) efficiency-anchored subtitle...
+        XCTAssertTrue(display.subtitle.contains("efficiency"),
+                      "Driver still routes to the efficiency subtitle: \(display.subtitle)")
+        // ...but its LABEL no longer collides with the composite tile's name.
+        XCTAssertEqual(display.label, "Sleep Efficiency")
+        XCTAssertNotEqual(display.label, "Sleep Quality")
+        // HealthMetric.sleepEff.title is what the composite tile/detail renders as its
+        // title ("Sleep Quality"). The driver row must not share that string.
+        XCTAssertNotEqual(display.label, HealthMetric.sleepEff.title,
+                          "Driver label must differ from the composite tile title to avoid the collision")
+        XCTAssertEqual(HealthMetric.sleepEff.title, "Sleep Quality",
+                       "Composite tile/detail title stays 'Sleep Quality' (unchanged)")
+        // The divergence is real and intentional — the composite verdict is Excellent.
+        XCTAssertEqual(sleep.verdict, .excellent)
+    }
+
+    // Driver row must route to the efficiency-native detail, not the composite tile.
+    func testSleepEfficiencyDriverRoutesToSleepEffDetail() {
+        XCTAssertEqual(healthMetric(forDriverLabel: "Sleep Efficiency"), .sleepEfficiency)
+        // Composite label is not a driver label — no route from it.
+        XCTAssertNil(healthMetric(forDriverLabel: "Sleep Quality"))
+    }
+
+    // Pin the new case's title and confirm .sleepEff title is unchanged.
+    func testSleepEfficiencyTitlesDistinct() {
+        XCTAssertEqual(HealthMetric.sleepEfficiency.title, "Sleep Efficiency",
+                       ".sleepEfficiency.title must be 'Sleep Efficiency'")
+        XCTAssertEqual(HealthMetric.sleepEff.title, "Sleep Quality",
+                       ".sleepEff.title must stay 'Sleep Quality' (composite tile unchanged)")
+        XCTAssertNotEqual(HealthMetric.sleepEfficiency.title, HealthMetric.sleepEff.title,
+                          "The two sleep metric cases must have distinct titles")
+    }
+
     // Label-matches-axis ------------------------------------------------------------
 
     func testSleepLabelNamesEfficiencyNotFragmentation() {
         let sleep = sleepResult(verdict: .fair, composite: 60,
                                 axes: [(.efficiency, 52), (.fragmentation, 88)])
-        let r = card(action: .green, drivers: [driver("Sleep Quality", impact: 1, isNegative: true)], sleep: sleep)
+        let r = card(action: .green, drivers: [driver("Sleep Efficiency", impact: 1, isNegative: true)], sleep: sleep)
         let sub = r.driverDisplays().first!.subtitle
         XCTAssertTrue(sub.contains("efficiency") || sub.contains("Restless"), "Low axis is efficiency: \(sub)")
         XCTAssertFalse(sub.contains("Fragmented"), "Must not assert fragmentation when efficiency is the low axis")
@@ -635,7 +759,7 @@ final class ReadinessEngineTests: XCTestCase {
     func testSleepDriverNamesEfficiencyNotFragmentationEvenWhenCompositeFragLow() {
         let sleep = sleepResult(verdict: .fair, composite: 60,
                                 axes: [(.fragmentation, 50), (.efficiency, 85)])
-        let r = card(action: .green, drivers: [driver("Sleep Quality", impact: 1, isNegative: true)], sleep: sleep)
+        let r = card(action: .green, drivers: [driver("Sleep Efficiency", impact: 1, isNegative: true)], sleep: sleep)
         let sub = r.driverDisplays().first!.subtitle
         XCTAssertTrue(sub.contains("efficiency"), "Driver is the engine efficiency signal: \(sub)")
         XCTAssertFalse(sub.contains("Fragmented"), "Must not adopt the composite's fragmentation axis")
@@ -650,7 +774,7 @@ final class ReadinessEngineTests: XCTestCase {
         let sleep = sleepResult(verdict: .good, composite: 78,
                                 axes: [(.efficiency, 88), (.fragmentation, 84),
                                        (.duration, 80), (.architecture, 82), (.consistency, 79)])
-        let r = card(action: .green, drivers: [driver("Sleep Quality", impact: 1, isNegative: true)], sleep: sleep)
+        let r = card(action: .green, drivers: [driver("Sleep Efficiency", impact: 1, isNegative: true)], sleep: sleep)
         let display = r.driverDisplays().first!
         XCTAssertTrue(display.subtitle.contains("efficiency"),
                       "Engine raised the row — must name efficiency, not suppress: \(display.subtitle)")
@@ -667,7 +791,7 @@ final class ReadinessEngineTests: XCTestCase {
     func testGoodCompositeNonEfficiencyWeakAxisStillNamesEfficiency() {
         let sleep = sleepResult(verdict: .good, composite: 74,
                                 axes: [(.fragmentation, 68), (.efficiency, 85), (.duration, 80)])
-        let r = card(action: .green, drivers: [driver("Sleep Quality", impact: 1, isNegative: true)], sleep: sleep)
+        let r = card(action: .green, drivers: [driver("Sleep Efficiency", impact: 1, isNegative: true)], sleep: sleep)
         let sub = r.driverDisplays().first!.subtitle
         XCTAssertTrue(sub.contains("efficiency"))
         XCTAssertFalse(sub.contains("Fragmented"))
@@ -679,7 +803,7 @@ final class ReadinessEngineTests: XCTestCase {
     func testCompositeAgreementRefinesEfficiencyWording() {
         let sleep = sleepResult(verdict: .good, composite: 72,
                                 axes: [(.efficiency, 66), (.fragmentation, 85), (.duration, 82)])
-        let r = card(action: .green, drivers: [driver("Sleep Quality", impact: 1, isNegative: true)], sleep: sleep)
+        let r = card(action: .green, drivers: [driver("Sleep Efficiency", impact: 1, isNegative: true)], sleep: sleep)
         let sub = r.driverDisplays().first!.subtitle
         XCTAssertTrue(sub.contains("efficiency"))
         XCTAssertFalse(sub.contains("Fragmented"))
@@ -687,7 +811,7 @@ final class ReadinessEngineTests: XCTestCase {
 
     // No composite yet (engine ran, sleep engine hasn't) → still efficiency-worded.
     func testSleepDriverNamesEfficiencyWhenCompositeAbsent() {
-        let r = card(action: .green, drivers: [driver("Sleep Quality", impact: 1, isNegative: true)], sleep: nil)
+        let r = card(action: .green, drivers: [driver("Sleep Efficiency", impact: 1, isNegative: true)], sleep: nil)
         let sub = r.driverDisplays().first!.subtitle
         XCTAssertTrue(sub.contains("efficiency"))
         XCTAssertFalse(sub.contains("Fragmented"))
@@ -728,11 +852,11 @@ final class ReadinessEngineTests: XCTestCase {
                                        (.architecture, 80), (.consistency, 78)])
         let r = card(action: .green,
                      drivers: [driver("HRV", impact: 1, isNegative: true),
-                               driver("Sleep Quality", impact: 1, isNegative: true)],
+                               driver("Sleep Efficiency", impact: 1, isNegative: true)],
                      sleep: sleep)
         let displays = r.driverDisplays()
         let hrv = displays.first { $0.label == "HRV" }!
-        let sq = displays.first { $0.label == "Sleep Quality" }!
+        let sq = displays.first { $0.label == "Sleep Efficiency" }!
 
         XCTAssertEqual(hrv.sentiment, .calm)
         XCTAssertFalse(hrv.subtitle.lowercased().contains("stress"))
@@ -740,5 +864,409 @@ final class ReadinessEngineTests: XCTestCase {
         XCTAssertFalse(sq.subtitle.contains("Fragmented"))
         XCTAssertNotNil(r.reconciliationLine)
         XCTAssertFalse(displays.contains { $0.sentiment == .warn })
+    }
+
+    // MARK: - Phase 2: gate-hold messaging regression (EXPECTED RED until Phase 3)
+    //
+    // Captures the shipped bug: on a raw-green day the hysteresis gate holds the DISPLAY
+    // at yellow, but `action` (and the copy derived from it) is driven off the gated
+    // `truth`, so the card claims "Multiple recovery signals are outside their normal
+    // range" while every recovery delta is favorable and every driver row is a green
+    // up-arrow. These assert the POST-FIX contract; they FAIL against current code.
+
+    private let yellowClusterClaim = "Multiple recovery signals are outside their normal range"
+
+    // A result mirroring the CURRENT engine output on a cold-start gate hold:
+    //   rawTruth green (recovery is fine) but displayed truth yellow (held for confirmation).
+    // `action == truth` here because the engine currently does `action = truth` — that
+    // coupling is exactly what Phase 3 fixes. Every delta is favorable-or-neutral; the
+    // drivers are all positive (green up-arrows).
+    private func gateHoldCard(drivers: [ReadinessDriver]) -> ReadinessResult {
+        var r = ReadinessResult.empty
+        r.rawTruth = .green
+        r.truth = .yellow
+        r.action = .yellow
+        r.drivers = drivers
+        r.rhrDelta = -3.9   // below baseline → favorable
+        r.hrvDelta = 1.4    // above baseline → favorable
+        r.sleepDelta = 1.1  // above target → favorable
+        r.rrDelta = -2.3    // below baseline → favorable
+        r.tempDelta = 0.0   // flat → neutral
+        r.effDelta = 0.02   // above baseline → favorable
+        return r
+    }
+
+    private func favorableDrivers() -> [ReadinessDriver] {
+        [driver("RHR", impact: 1, isNegative: false),
+         driver("Sleep", impact: 1, isNegative: false)]
+    }
+
+    private func clearVerdictLog() {
+        UserDefaults(suiteName: SharedStore.appGroupID)?
+            .removeObject(forKey: SharedStore.verdictLogKey)
+    }
+
+    // P2-1: no "outside their normal range" (or synonym) when every recovery delta is favorable.
+    func testGateHoldExplanationDoesNotClaimSignalsOutsideNormalWhenAllFavorable() {
+        let p = gateHoldCard(drivers: favorableDrivers()).presentation(manual: .default)
+        XCTAssertFalse(p.explanation.contains(yellowClusterClaim),
+            "Explanation must not claim recovery signals are outside normal range when every delta is favorable. Got: \(p.explanation)")
+        XCTAssertFalse(p.explanation.lowercased().contains("outside"),
+            "No 'outside normal range' synonym allowed on an all-favorable card. Got: \(p.explanation)")
+        XCTAssertFalse(p.explanation.lowercased().contains("below baseline"),
+            "No 'below baseline' claim allowed when all deltas are favorable. Got: \(p.explanation)")
+    }
+
+    // P2-2: a positive (green up-arrow) driver row must not sit under a caution headline.
+    func testGateHoldPositiveDriverRowsDoNotContradictHeadline() {
+        let r = gateHoldCard(drivers: favorableDrivers())
+        let p = r.presentation(manual: .default)
+        let displays = r.driverDisplays()
+        XCTAssertTrue(displays.contains { $0.sentiment == .positive },
+            "Fixture must have at least one positive driver row")
+        let cautionHeadline = p.headline.lowercased().contains("guardrails")
+            || p.subline.lowercased().contains("reduce effort")
+        XCTAssertFalse(cautionHeadline && displays.contains { $0.sentiment == .positive },
+            "A positive (green up-arrow) driver row must not sit under a caution headline. headline=\(p.headline) subline=\(p.subline)")
+    }
+
+    // P2-3: the count==0 Yellow must NOT route to .yellowCluster copy
+    // (the `count==1 ? isolated : cluster` ternary misroutes zero-negative-driver Yellows).
+    func testZeroNegativeDriverYellowDoesNotRouteToClusterCopy() {
+        var r = ReadinessResult.empty
+        r.rawTruth = .yellow
+        r.truth = .yellow
+        r.action = .yellow
+        r.drivers = []   // count == 0 negatives
+        let p = r.presentation(manual: .default)
+        XCTAssertFalse(p.explanation.contains(yellowClusterClaim),
+            "A zero-negative-driver Yellow must not route to the .yellowCluster 'multiple signals' copy. Got: \(p.explanation)")
+    }
+
+    // P2-4: on rawTruth==green && truth==yellow the explanation must confirm, not caution.
+    func testGateHoldExplanationIsConfirmNotCaution() {
+        let p = gateHoldCard(drivers: favorableDrivers()).presentation(manual: .default)
+        XCTAssertTrue(p.explanation.lowercased().contains("confirm"),
+            "On a rawTruth==green/truth==yellow hold the explanation must confirm recovery looks good, not caution. Got: \(p.explanation)")
+        XCTAssertFalse(p.explanation.contains(yellowClusterClaim),
+            "Hold explanation must not be the caution cluster string. Got: \(p.explanation)")
+        XCTAssertFalse(p.explanation.lowercased().contains("guardrails"),
+            "Hold explanation must not read as guardrails caution. Got: \(p.explanation)")
+    }
+
+    // P2-5: the engine strings WatchRootView reads directly (NOT via presentation()) must
+    // narrate the amber-badge/green-action split, not stay bare yellow caution / bare green.
+    func testGateHoldEngineMessageNarratesSplitNotBareGreenOrCaution() {
+        clearVerdictLog()
+        // Strong-green recovery day; with an empty verdict log yesterday is absent, so the
+        // cold-start hysteresis hold fires: rawTruth green, displayed truth yellow.
+        let result = eval(history(today: point(day: 28, rhr: 59, hrv: 36, sleep: 9.0, inBed: 9.5, rr: 13.5)))
+        XCTAssertEqual(result.rawTruth, .green, "Favorable recovery must be raw green")
+        XCTAssertEqual(result.truth, .yellow, "Empty verdict log → cold-start hold → displayed yellow")
+        XCTAssertTrue(result.actionMessage.lowercased().contains("confirm"),
+            "Engine actionMessage (read directly by WatchRootView) must narrate the confirm/hold on a raw-green day. Got: \(result.actionMessage)")
+        XCTAssertFalse(result.actionMessage.contains("avoid top-end effort"),
+            "Must not emit the bare yellow guardrails message when rawTruth is green. Got: \(result.actionMessage)")
+    }
+
+    // P2-6: when action derives green under an amber truth badge, the engine title must
+    // reference the hold — assert on the actual engine string, not the card path.
+    func testGateHoldEngineTitleReferencesHold() {
+        clearVerdictLog()
+        let result = eval(history(today: point(day: 28, rhr: 59, hrv: 36, sleep: 9.0, inBed: 9.5, rr: 13.5)))
+        XCTAssertEqual(result.rawTruth, .green)
+        XCTAssertEqual(result.truth, .yellow)
+        let title = result.actionTitle.lowercased()
+        XCTAssertTrue(title.contains("confirm") || title.contains("clear"),
+            "Engine actionTitle must reference confirming/clearing the hold rather than a bare verdict. Got: \(result.actionTitle)")
+    }
+
+    // MARK: - Load-origin gate-skip regression tests
+
+    // Helper: ISO string for yesterday using the same Calendar.current path the engine uses.
+    private func yesterdayISO() -> String {
+        let cal = Calendar.current
+        let yesterday = cal.date(byAdding: .day, value: -1, to: Date()) ?? Date()
+        let comps = cal.dateComponents([.year, .month, .day], from: yesterday)
+        return String(format: "%04d-%02d-%02d",
+                      comps.year ?? 1970, comps.month ?? 1, comps.day ?? 1)
+    }
+
+    // G-1: Yesterday was yellow due to load alone (rawRecoveryTruth == .green).
+    // The gate must recognise the load-origin and skip the hold → displayed truth green.
+    func testLoadOriginYellowSkipsHoldShowsGreen() {
+        clearVerdictLog()
+        SharedStore.appendVerdictLog(
+            DailyVerdictRecord(
+                dateISO: yesterdayISO(),
+                rawTotal: -2,        // load dragged total below yellow cutoff
+                rawRecovery: 2,      // recovery alone was positive
+                rawTruth: .yellow,
+                rawRecoveryTruth: .green   // load-origin: recovery-stripped verdict was green
+            )
+        )
+        let result = eval(history(today: point(day: 28, rhr: 59, hrv: 36, sleep: 9.0, inBed: 9.5, rr: 13.5)))
+        XCTAssertEqual(result.rawTruth, .green,
+            "Favorable recovery signals must produce rawTruth green. Got: \(result.rawTruth)")
+        XCTAssertEqual(result.truth, .green,
+            "Load-origin yesterday yellow must not trigger hold; gate should skip and display green. Got: \(result.truth)")
+    }
+
+    // G-2: Yesterday was yellow due to recovery signals (rawRecoveryTruth == .yellow).
+    // The gate must preserve the one-day confirmation hold → displayed truth yellow.
+    func testRecoveryOriginYellowKeepsHold() {
+        clearVerdictLog()
+        SharedStore.appendVerdictLog(
+            DailyVerdictRecord(
+                dateISO: yesterdayISO(),
+                rawTotal: -5,        // recovery signals drove the yellow
+                rawRecovery: -5,
+                rawTruth: .yellow,
+                rawRecoveryTruth: .yellow   // recovery-origin: stripped verdict also yellow
+            )
+        )
+        let result = eval(history(today: point(day: 28, rhr: 59, hrv: 36, sleep: 9.0, inBed: 9.5, rr: 13.5)))
+        XCTAssertEqual(result.rawTruth, .green,
+            "Favorable recovery signals must produce rawTruth green. Got: \(result.rawTruth)")
+        XCTAssertEqual(result.truth, .yellow,
+            "Recovery-origin yesterday yellow must keep the confirmation hold; displayed truth must stay yellow. Got: \(result.truth)")
+    }
+    // MARK: - VerdictPersistence (weekly summary evaluations must not persist)
+
+    private func todayISO() -> String {
+        let c = Calendar.current.dateComponents([.year, .month, .day], from: Date())
+        return String(format: "%04d-%02d-%02d", c.year ?? 1970, c.month ?? 1, c.day ?? 1)
+    }
+
+    private func verdictLogData() -> Data? {
+        UserDefaults(suiteName: SharedStore.appGroupID)?.data(forKey: SharedStore.verdictLogKey)
+    }
+
+    private func seedYesterday() {
+        SharedStore.appendVerdictLog(
+            DailyVerdictRecord(
+                dateISO: yesterdayISO(),
+                rawTotal: -5,
+                rawRecovery: -5,
+                rawTruth: .yellow,
+                rawRecoveryTruth: .yellow
+            )
+        )
+    }
+
+    // (a) No wrapper: persists exactly as before.
+    func testUnwrappedEvaluatePersistsTodaysSlot() {
+        clearVerdictLog()
+        _ = eval(history(today: point(day: 28)))
+        XCTAssertTrue(SharedStore.loadVerdictLog().contains { $0.dateISO == todayISO() })
+    }
+
+    // (b) Suppressed: the stored Data is byte-identical before and after.
+    func testSuppressedEvaluateLeavesStoredLogByteIdentical() {
+        clearVerdictLog()
+        seedYesterday()
+        let before = verdictLogData()
+        XCTAssertNotNil(before)
+
+        _ = VerdictPersistence.withSuppressedPersistence {
+            eval(history(today: point(day: 28, rhr: 72)))
+        }
+
+        XCTAssertEqual(verdictLogData(), before)
+    }
+
+    func testSuppressedEvaluateOnEmptyLogStaysEmpty() {
+        clearVerdictLog()
+        _ = VerdictPersistence.withSuppressedPersistence {
+            eval(history(today: point(day: 28)))
+        }
+        XCTAssertNil(verdictLogData(), "A suppressed call must not even create the log key")
+    }
+
+    // (c) The task-local does not leak past the block.
+    func testPersistenceResumesAfterSuppressedBlock() {
+        clearVerdictLog()
+        _ = VerdictPersistence.withSuppressedPersistence { eval(history(today: point(day: 28))) }
+        XCTAssertNil(verdictLogData())
+        XCTAssertFalse(VerdictPersistence.isSuppressed)
+
+        _ = eval(history(today: point(day: 28)))
+        XCTAssertTrue(SharedStore.loadVerdictLog().contains { $0.dateISO == todayISO() })
+    }
+
+    // (e) Nesting.
+    func testSuppressionInsideNonSuppressedOuterScope() {
+        clearVerdictLog()
+        VerdictPersistence.$isSuppressed.withValue(false) {
+            _ = VerdictPersistence.withSuppressedPersistence { eval(history(today: point(day: 28))) }
+        }
+        XCTAssertNil(verdictLogData())
+    }
+
+    func testNonSuppressedInsideSuppressedOuterScope() {
+        clearVerdictLog()
+        VerdictPersistence.withSuppressedPersistence {
+            VerdictPersistence.$isSuppressed.withValue(false) {
+                _ = eval(history(today: point(day: 28)))
+            }
+        }
+        XCTAssertTrue(SharedStore.loadVerdictLog().contains { $0.dateISO == todayISO() })
+    }
+
+    func testSuppressedInnerExitKeepsOuterSuppressed() {
+        clearVerdictLog()
+        VerdictPersistence.withSuppressedPersistence {
+            VerdictPersistence.withSuppressedPersistence { _ = eval(history(today: point(day: 28))) }
+            XCTAssertTrue(VerdictPersistence.isSuppressed)
+            _ = eval(history(today: point(day: 28)))
+        }
+        XCTAssertNil(verdictLogData())
+    }
+
+    // MARK: Weekly-style loop fixtures and helpers
+
+    private func weeklyStyleFixture() -> [DailyHealthPoint] {
+        // 23 neutral baseline days, then a week that drifts into flagged-negative territory.
+        let baseline = (1...23).map { point(day: $0) }
+        let week = [
+            point(day: 24),
+            point(day: 25, rhr: 70),
+            point(day: 26, rhr: 71, hrv: 25),
+            point(day: 27, rhr: 72, hrv: 24, sleep: 6.5, inBed: 7.0),
+            point(day: 28, rhr: 59, hrv: 36, sleep: 9.0, inBed: 9.5, rr: 13.5),
+        ]
+        return baseline + week
+    }
+
+    private struct ScenarioRun {
+        let weekly: [ReadinessResult]
+        let live: ReadinessResult?
+        let logData: Data?
+    }
+
+    /// Same seeded state every time (cleared log + a fixed yesterday slot, because the gate reads
+    /// wall-clock yesterday), then the weekly-style per-day loop, then optionally one live-style
+    /// evaluate for the final day (unwrapped, as the live sites call it).
+    private func runScenario(suppressedWeekly: Bool, thenLive: Bool) -> ScenarioRun {
+        clearVerdictLog()
+        seedYesterday()
+        let full = weeklyStyleFixture()
+        let weekly: [ReadinessResult] = full.suffix(5).map { pt in
+            let truncated = full.filter { $0.dayISO <= pt.dayISO }
+            if suppressedWeekly {
+                return VerdictPersistence.withSuppressedPersistence { eval(truncated) }
+            }
+            return eval(truncated)
+        }
+        let live = thenLive ? eval(full) : nil
+        return ScenarioRun(weekly: weekly, live: live, logData: verdictLogData())
+    }
+
+    private func jsonFields(_ r: ReadinessResult) throws -> [String: Any] {
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.sortedKeys]
+        return try JSONSerialization.jsonObject(with: enc.encode(r)) as! [String: Any]
+    }
+
+    /// JSON form of a result with the documented exclusions applied:
+    ///  - `flags` is order-insensitive (Engine builds it from Dictionary(grouping:).keys, whose
+    ///    order is unspecified), so it is sorted;
+    ///  - optionally, `consecutiveDays` is stripped from each driver (nothing else is).
+    private func normalizedFields(_ r: ReadinessResult, stripConsecutiveDays: Bool) throws -> [String: Any] {
+        var j = try jsonFields(r)
+        if let flags = j["flags"] as? [String] { j["flags"] = flags.sorted() }
+        if stripConsecutiveDays, let drivers = j["drivers"] as? [[String: Any]] {
+            j["drivers"] = drivers.map { d -> [String: Any] in
+                var d = d
+                d.removeValue(forKey: "consecutiveDays")
+                return d
+            }
+        }
+        return j
+    }
+
+    private func assertSameFields(
+        _ a: ReadinessResult, _ b: ReadinessResult, stripConsecutiveDays: Bool, _ label: String,
+        file: StaticString = #filePath, line: UInt = #line
+    ) throws {
+        let aj = try normalizedFields(a, stripConsecutiveDays: stripConsecutiveDays)
+        let bj = try normalizedFields(b, stripConsecutiveDays: stripConsecutiveDays)
+        for key in Set(aj.keys).union(bj.keys).sorted() {
+            XCTAssertTrue(
+                NSDictionary(dictionary: [key: aj[key] ?? NSNull()])
+                    .isEqual(to: [key: bj[key] ?? NSNull()]),
+                "\(label) field '\(key)': A=\(String(describing: aj[key])) B=\(String(describing: bj[key]))",
+                file: file, line: line
+            )
+        }
+    }
+
+    // CONTROL: identical PERSISTING runs from identical seeded state, no suppression involved.
+    // `flags` ORDER is nondeterministic on its own: Engine builds it from
+    // Array(Dictionary(grouping:).keys), whose order is unspecified. Measured when this was
+    // written: 23 of 25 persisting-vs-persisting pairs of weekly loops differed in flags order
+    // (36 of 125 day-pairs). That justifies comparing `flags` as a set in the parity tests below.
+    // Order is deliberately NOT asserted here (it would be flaky); the SET must always match.
+    func testFlagsSetIsStableAcrossIdenticalPersistingRuns() {
+        for run in 0..<5 {
+            let r1 = runScenario(suppressedWeekly: false, thenLive: false)
+            let r2 = runScenario(suppressedWeekly: false, thenLive: false)
+            for (i, (a, b)) in zip(r1.weekly, r2.weekly).enumerated() {
+                XCTAssertEqual(Set(a.flags), Set(b.flags), "run \(run) day index \(i): flag SET differs")
+            }
+        }
+    }
+
+    // (d) Parity: the weekly-style per-day loop returns the same ReadinessResult whether or not the
+    // calls persist, with two documented exclusions:
+    //   * `flags` compared as sets (order is nondeterministic; see the control test above).
+    //   * drivers[].consecutiveDays is stripped. KNOWN DIVERGENCE: for a weekly past-day call,
+    //     SharedStore.consecutiveDaysActive reads TODAY's slot right after the engine's own write
+    //     (Engine ~:439 before ~:715). Persisting => it counts its own just-written flag (1);
+    //     suppressed => no slot, 0. consecutiveDays feeds only the "Nth day" badge and the HRV
+    //     subtitle copy (ContentView ~:1511, ReadinessPresentation ~:339), never a verdict, score,
+    //     gate or confidence field (the engine builds `drivers` after all of them), and the weekly
+    //     view reads only `truth`.
+    func testWeeklyStyleLoopMatchesPersistingVsSuppressed() throws {
+        let persisted = runScenario(suppressedWeekly: false, thenLive: false).weekly
+        let suppressed = runScenario(suppressedWeekly: true, thenLive: false).weekly
+        XCTAssertEqual(persisted.count, suppressed.count)
+
+        for (i, (p, s)) in zip(persisted, suppressed).enumerated() {
+            XCTAssertEqual(p.truth, s.truth, "day \(i) truth")
+            XCTAssertEqual(p.rawTruth, s.rawTruth, "day \(i) rawTruth")
+            XCTAssertEqual(p.action, s.action, "day \(i) action")
+            XCTAssertEqual(p.rawRecoveryTruth, s.rawRecoveryTruth, "day \(i) rawRecoveryTruth")
+            XCTAssertEqual(p.confidence, s.confidence, "day \(i) confidence")
+            XCTAssertEqual(p.totalScore, s.totalScore, "day \(i) totalScore")
+            XCTAssertEqual(p.canPushKeyLift, s.canPushKeyLift, "day \(i) canPushKeyLift")
+            try assertSameFields(p, s, stripConsecutiveDays: true, "day \(i)")
+        }
+    }
+
+    // Live-path equivalence: a live-style evaluate after the weekly loop must be unaffected by
+    // whether the weekly loop persisted. NO exemption for consecutiveDays here (flags still a set).
+    // The stored log afterwards must have equal decoded records and be byte-equal when re-encoded
+    // with sorted keys (raw bytes differ only by JSON key order, so they are not compared).
+    func testLiveEvaluateAfterWeeklyLoopIsIdenticalPersistingVsSuppressed() throws {
+        let a = runScenario(suppressedWeekly: false, thenLive: true)
+        let b = runScenario(suppressedWeekly: true, thenLive: true)
+        let liveA = try XCTUnwrap(a.live)
+        let liveB = try XCTUnwrap(b.live)
+
+        try assertSameFields(liveA, liveB, stripConsecutiveDays: false, "live")
+        XCTAssertEqual(liveA.truth, liveB.truth)
+        XCTAssertEqual(liveA.drivers, liveB.drivers, "live drivers incl. consecutiveDays")
+
+        // The stored log must be the same after the live call. Raw bytes are NOT comparable across
+        // two separate encodes: JSONEncoder without .sortedKeys emits keys in unspecified order
+        // (observed: same-length Data, different key order). So compare the decoded records and the
+        // sorted-keys re-encoding, which are order-independent.
+        let logA = try JSONDecoder().decode([DailyVerdictRecord].self, from: try XCTUnwrap(a.logData))
+        let logB = try JSONDecoder().decode([DailyVerdictRecord].self, from: try XCTUnwrap(b.logData))
+        XCTAssertEqual(logA, logB, "stored verdict log differs after the live call")
+        let sorted = JSONEncoder()
+        sorted.outputFormatting = [.sortedKeys]
+        XCTAssertEqual(try sorted.encode(logA), try sorted.encode(logB))
     }
 }

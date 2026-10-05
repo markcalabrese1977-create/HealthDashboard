@@ -5,29 +5,15 @@ import SwiftUI
 
 struct Provider: TimelineProvider {
     func placeholder(in context: Context) -> SimpleEntry {
-        SimpleEntry(
-            date: Date(),
-            snapshot: SharedStore.load(),
-            history: SharedStore.loadHistory()
-        )
+        SimpleEntry(date: Date(), projection: SharedStore.loadWidgetProjection())
     }
 
     func getSnapshot(in context: Context, completion: @escaping (SimpleEntry) -> Void) {
-        completion(
-            SimpleEntry(
-                date: Date(),
-                snapshot: SharedStore.load(),
-                history: SharedStore.loadHistory()
-            )
-        )
+        completion(SimpleEntry(date: Date(), projection: SharedStore.loadWidgetProjection()))
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<SimpleEntry>) -> Void) {
-        let entry = SimpleEntry(
-            date: Date(),
-            snapshot: SharedStore.load(),
-            history: SharedStore.loadHistory()
-        )
+        let entry = SimpleEntry(date: Date(), projection: SharedStore.loadWidgetProjection())
 
         // Refresh every 30 minutes
         let nextUpdate = Calendar.current.date(byAdding: .minute, value: 30, to: Date())
@@ -38,11 +24,16 @@ struct Provider: TimelineProvider {
 }
 
 // MARK: - Entry
+//
+// Dumb mirror: the widget renders exactly what the app last projected, via
+// SharedStore.loadWidgetProjection(). It must never call ReadinessEngine.evaluate()
+// itself — that both diverges from the app's own verdict and writes to the shared
+// hysteresis gate log (SharedStore.appendVerdictLog) from a second, unsynchronized
+// process. `projection` is nil only when the app has never written one yet.
 
 struct SimpleEntry: TimelineEntry {
     let date: Date
-    let snapshot: SharedHealthSnapshot
-    let history: [DailyHealthPoint]
+    let projection: WidgetProjection?
 }
 
 // MARK: - View
@@ -54,22 +45,21 @@ struct HealthDashboardWidgetEntryView: View {
 
     private var isSmall: Bool { family == .systemSmall }
 
-    // Manual toggles still influence readiness, but we never print their names in the widget.
-    private var manual: ManualReadinessInputs { SharedStore.loadManual() }
+    // Dumb mirror: everything rendered comes from the app's last projection.
+    // nil only when the app has never written one (fresh install, App Group not yet
+    // populated) — rendered as an explicit neutral placeholder, never a guessed verdict.
+    private var projection: WidgetProjection? { entry.projection }
 
-    private var readiness: ReadinessResult {
-        ReadinessEngine.evaluate(history: entry.history, manual: manual)
-    }
-
-    private var rhrSeries: [Double?] { entry.history.map { $0.restingHR } }
-    private var hrvSeries: [Double?] { entry.history.map { $0.hrvMS } }
-    private var sleepSeries: [Double?] { entry.history.map { $0.sleepHours } }
+    private var rhrSeries: [Double?] { projection?.rhrSeries ?? [] }
+    private var hrvSeries: [Double?] { projection?.hrvSeries ?? [] }
+    private var sleepSeries: [Double?] { projection?.sleepSeries ?? [] }
 
     private var readinessLine: String {
-        "\(readiness.truth.title) · \(readiness.flags.count) flag" + (readiness.flags.count == 1 ? "" : "s")
+        guard let projection else { return "No data yet" }
+        return "\(projection.truth.title) · \(projection.flagCount) flag" + (projection.flagCount == 1 ? "" : "s")
     }
 
-    private var statusPillText: String { readiness.truth.title }
+    private var statusPillText: String { projection?.truth.title ?? "—" }
 
     // Layout tuning (keeps it from “jumping”)
     private var outerPadding: CGFloat { isSmall ? 10 : 12 }
@@ -103,15 +93,15 @@ struct HealthDashboardWidgetEntryView: View {
             headerCompact
 
             metricRow(label: "RHR",
-                      value: "\(entry.snapshot.restingHR)",
+                      value: projection.map { "\($0.rhr)" } ?? "—",
                       series: rhrSeries)
 
             metricRow(label: "HRV",
-                      value: "\(entry.snapshot.hrv) ms",
+                      value: projection.map { "\($0.hrv) ms" } ?? "—",
                       series: hrvSeries)
 
             metricRow(label: "Sleep",
-                      value: String(format: "%.1f h", entry.snapshot.sleepHours),
+                      value: projection.map { String(format: "%.1f h", $0.sleepHours) } ?? "—",
                       series: sleepSeries)
         }
         .padding(outerPadding)
@@ -193,7 +183,10 @@ struct HealthDashboardWidgetEntryView: View {
     }
 
     private var pillBackground: Color {
-        switch readiness.truth {
+        guard let truth = projection?.truth else {
+            return Color(.systemGray).opacity(0.22)   // no projection yet — neutral, not a guessed verdict
+        }
+        switch truth {
         case .green: return Color(.systemGreen).opacity(0.22)
         case .yellow: return Color(.systemOrange).opacity(0.22)
         case .red: return Color(.systemRed).opacity(0.22)

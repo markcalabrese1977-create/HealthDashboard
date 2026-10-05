@@ -107,10 +107,12 @@ struct WeeklySummary {
 
         // Weekly readiness scores
         let scores: [Int] = thisWeek.map { pt in
-            let r = ReadinessEngine.evaluate(
-                history: history.filter { $0.dayISO <= pt.dayISO },
-                manual: manual
-            )
+            let r = VerdictPersistence.withSuppressedPersistence {
+                ReadinessEngine.evaluate(
+                    history: history.filter { $0.dayISO <= pt.dayISO },
+                    manual: manual
+                )
+            }
             switch r.truth {
             case .green: return 2
             case .yellow: return 1
