@@ -654,6 +654,27 @@ struct WidgetProjection: Codable, Equatable {
     let updatedAt: Date
 }
 
+// MARK: - Verdict persistence scope
+//
+// ReadinessEngine.evaluate() upserts the verdict log (SharedStore.appendVerdictLog) into the
+// slot for the WALL-CLOCK day, whatever day the evaluated history ends on. Callers that only
+// want the returned ReadinessResult (the weekly summary re-evaluates past days on every
+// SwiftUI body pass) wrap the call in `withSuppressedPersistence` so it never touches the log.
+// The default is persist: the live sites and direct callers (tests) are unaffected.
+//
+// `nonisolated` because the app target defaults to MainActor and this is read from any isolation
+// context. A synchronous `withValue` binding is visible at appendVerdictLog because evaluate()
+// calls it synchronously, with no Task or thread hop in between.
+nonisolated enum VerdictPersistence {
+    @TaskLocal static var isSuppressed = false
+
+    static func withSuppressedPersistence<T>(_ body: () throws -> T) rethrows -> T {
+        try $isSuppressed.withValue(true) {
+            try body()
+        }
+    }
+}
+
 // MARK: - App Group Store + Debug Hooks
 
 enum SharedStore {
@@ -1022,6 +1043,11 @@ enum SharedStore {
             log("⛔️ appendVerdictLog blocked — not the main app (bundleIdentifier=\(Bundle.main.bundleIdentifier ?? "nil"))")
             return
         }
+
+        // Weekly-summary (and any other result-only) evaluations: no load, no upsert, no
+        // trim, no UserDefaults write. See VerdictPersistence.
+        if VerdictPersistence.isSuppressed { return }
+
         guard let d = defaults() else { return }
 
         var log_ = loadVerdictLog()

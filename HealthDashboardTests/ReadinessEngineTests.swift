@@ -1031,4 +1031,242 @@ final class ReadinessEngineTests: XCTestCase {
         XCTAssertEqual(result.truth, .yellow,
             "Recovery-origin yesterday yellow must keep the confirmation hold; displayed truth must stay yellow. Got: \(result.truth)")
     }
+    // MARK: - VerdictPersistence (weekly summary evaluations must not persist)
+
+    private func todayISO() -> String {
+        let c = Calendar.current.dateComponents([.year, .month, .day], from: Date())
+        return String(format: "%04d-%02d-%02d", c.year ?? 1970, c.month ?? 1, c.day ?? 1)
+    }
+
+    private func verdictLogData() -> Data? {
+        UserDefaults(suiteName: SharedStore.appGroupID)?.data(forKey: SharedStore.verdictLogKey)
+    }
+
+    private func seedYesterday() {
+        SharedStore.appendVerdictLog(
+            DailyVerdictRecord(
+                dateISO: yesterdayISO(),
+                rawTotal: -5,
+                rawRecovery: -5,
+                rawTruth: .yellow,
+                rawRecoveryTruth: .yellow
+            )
+        )
+    }
+
+    // (a) No wrapper: persists exactly as before.
+    func testUnwrappedEvaluatePersistsTodaysSlot() {
+        clearVerdictLog()
+        _ = eval(history(today: point(day: 28)))
+        XCTAssertTrue(SharedStore.loadVerdictLog().contains { $0.dateISO == todayISO() })
+    }
+
+    // (b) Suppressed: the stored Data is byte-identical before and after.
+    func testSuppressedEvaluateLeavesStoredLogByteIdentical() {
+        clearVerdictLog()
+        seedYesterday()
+        let before = verdictLogData()
+        XCTAssertNotNil(before)
+
+        _ = VerdictPersistence.withSuppressedPersistence {
+            eval(history(today: point(day: 28, rhr: 72)))
+        }
+
+        XCTAssertEqual(verdictLogData(), before)
+    }
+
+    func testSuppressedEvaluateOnEmptyLogStaysEmpty() {
+        clearVerdictLog()
+        _ = VerdictPersistence.withSuppressedPersistence {
+            eval(history(today: point(day: 28)))
+        }
+        XCTAssertNil(verdictLogData(), "A suppressed call must not even create the log key")
+    }
+
+    // (c) The task-local does not leak past the block.
+    func testPersistenceResumesAfterSuppressedBlock() {
+        clearVerdictLog()
+        _ = VerdictPersistence.withSuppressedPersistence { eval(history(today: point(day: 28))) }
+        XCTAssertNil(verdictLogData())
+        XCTAssertFalse(VerdictPersistence.isSuppressed)
+
+        _ = eval(history(today: point(day: 28)))
+        XCTAssertTrue(SharedStore.loadVerdictLog().contains { $0.dateISO == todayISO() })
+    }
+
+    // (e) Nesting.
+    func testSuppressionInsideNonSuppressedOuterScope() {
+        clearVerdictLog()
+        VerdictPersistence.$isSuppressed.withValue(false) {
+            _ = VerdictPersistence.withSuppressedPersistence { eval(history(today: point(day: 28))) }
+        }
+        XCTAssertNil(verdictLogData())
+    }
+
+    func testNonSuppressedInsideSuppressedOuterScope() {
+        clearVerdictLog()
+        VerdictPersistence.withSuppressedPersistence {
+            VerdictPersistence.$isSuppressed.withValue(false) {
+                _ = eval(history(today: point(day: 28)))
+            }
+        }
+        XCTAssertTrue(SharedStore.loadVerdictLog().contains { $0.dateISO == todayISO() })
+    }
+
+    func testSuppressedInnerExitKeepsOuterSuppressed() {
+        clearVerdictLog()
+        VerdictPersistence.withSuppressedPersistence {
+            VerdictPersistence.withSuppressedPersistence { _ = eval(history(today: point(day: 28))) }
+            XCTAssertTrue(VerdictPersistence.isSuppressed)
+            _ = eval(history(today: point(day: 28)))
+        }
+        XCTAssertNil(verdictLogData())
+    }
+
+    // MARK: Weekly-style loop fixtures and helpers
+
+    private func weeklyStyleFixture() -> [DailyHealthPoint] {
+        // 23 neutral baseline days, then a week that drifts into flagged-negative territory.
+        let baseline = (1...23).map { point(day: $0) }
+        let week = [
+            point(day: 24),
+            point(day: 25, rhr: 70),
+            point(day: 26, rhr: 71, hrv: 25),
+            point(day: 27, rhr: 72, hrv: 24, sleep: 6.5, inBed: 7.0),
+            point(day: 28, rhr: 59, hrv: 36, sleep: 9.0, inBed: 9.5, rr: 13.5),
+        ]
+        return baseline + week
+    }
+
+    private struct ScenarioRun {
+        let weekly: [ReadinessResult]
+        let live: ReadinessResult?
+        let logData: Data?
+    }
+
+    /// Same seeded state every time (cleared log + a fixed yesterday slot, because the gate reads
+    /// wall-clock yesterday), then the weekly-style per-day loop, then optionally one live-style
+    /// evaluate for the final day (unwrapped, as the live sites call it).
+    private func runScenario(suppressedWeekly: Bool, thenLive: Bool) -> ScenarioRun {
+        clearVerdictLog()
+        seedYesterday()
+        let full = weeklyStyleFixture()
+        let weekly: [ReadinessResult] = full.suffix(5).map { pt in
+            let truncated = full.filter { $0.dayISO <= pt.dayISO }
+            if suppressedWeekly {
+                return VerdictPersistence.withSuppressedPersistence { eval(truncated) }
+            }
+            return eval(truncated)
+        }
+        let live = thenLive ? eval(full) : nil
+        return ScenarioRun(weekly: weekly, live: live, logData: verdictLogData())
+    }
+
+    private func jsonFields(_ r: ReadinessResult) throws -> [String: Any] {
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.sortedKeys]
+        return try JSONSerialization.jsonObject(with: enc.encode(r)) as! [String: Any]
+    }
+
+    /// JSON form of a result with the documented exclusions applied:
+    ///  - `flags` is order-insensitive (Engine builds it from Dictionary(grouping:).keys, whose
+    ///    order is unspecified), so it is sorted;
+    ///  - optionally, `consecutiveDays` is stripped from each driver (nothing else is).
+    private func normalizedFields(_ r: ReadinessResult, stripConsecutiveDays: Bool) throws -> [String: Any] {
+        var j = try jsonFields(r)
+        if let flags = j["flags"] as? [String] { j["flags"] = flags.sorted() }
+        if stripConsecutiveDays, let drivers = j["drivers"] as? [[String: Any]] {
+            j["drivers"] = drivers.map { d -> [String: Any] in
+                var d = d
+                d.removeValue(forKey: "consecutiveDays")
+                return d
+            }
+        }
+        return j
+    }
+
+    private func assertSameFields(
+        _ a: ReadinessResult, _ b: ReadinessResult, stripConsecutiveDays: Bool, _ label: String,
+        file: StaticString = #filePath, line: UInt = #line
+    ) throws {
+        let aj = try normalizedFields(a, stripConsecutiveDays: stripConsecutiveDays)
+        let bj = try normalizedFields(b, stripConsecutiveDays: stripConsecutiveDays)
+        for key in Set(aj.keys).union(bj.keys).sorted() {
+            XCTAssertTrue(
+                NSDictionary(dictionary: [key: aj[key] ?? NSNull()])
+                    .isEqual(to: [key: bj[key] ?? NSNull()]),
+                "\(label) field '\(key)': A=\(String(describing: aj[key])) B=\(String(describing: bj[key]))",
+                file: file, line: line
+            )
+        }
+    }
+
+    // CONTROL: identical PERSISTING runs from identical seeded state, no suppression involved.
+    // `flags` ORDER is nondeterministic on its own: Engine builds it from
+    // Array(Dictionary(grouping:).keys), whose order is unspecified. Measured when this was
+    // written: 23 of 25 persisting-vs-persisting pairs of weekly loops differed in flags order
+    // (36 of 125 day-pairs). That justifies comparing `flags` as a set in the parity tests below.
+    // Order is deliberately NOT asserted here (it would be flaky); the SET must always match.
+    func testFlagsSetIsStableAcrossIdenticalPersistingRuns() {
+        for run in 0..<5 {
+            let r1 = runScenario(suppressedWeekly: false, thenLive: false)
+            let r2 = runScenario(suppressedWeekly: false, thenLive: false)
+            for (i, (a, b)) in zip(r1.weekly, r2.weekly).enumerated() {
+                XCTAssertEqual(Set(a.flags), Set(b.flags), "run \(run) day index \(i): flag SET differs")
+            }
+        }
+    }
+
+    // (d) Parity: the weekly-style per-day loop returns the same ReadinessResult whether or not the
+    // calls persist, with two documented exclusions:
+    //   * `flags` compared as sets (order is nondeterministic; see the control test above).
+    //   * drivers[].consecutiveDays is stripped. KNOWN DIVERGENCE: for a weekly past-day call,
+    //     SharedStore.consecutiveDaysActive reads TODAY's slot right after the engine's own write
+    //     (Engine ~:439 before ~:715). Persisting => it counts its own just-written flag (1);
+    //     suppressed => no slot, 0. consecutiveDays feeds only the "Nth day" badge and the HRV
+    //     subtitle copy (ContentView ~:1511, ReadinessPresentation ~:339), never a verdict, score,
+    //     gate or confidence field (the engine builds `drivers` after all of them), and the weekly
+    //     view reads only `truth`.
+    func testWeeklyStyleLoopMatchesPersistingVsSuppressed() throws {
+        let persisted = runScenario(suppressedWeekly: false, thenLive: false).weekly
+        let suppressed = runScenario(suppressedWeekly: true, thenLive: false).weekly
+        XCTAssertEqual(persisted.count, suppressed.count)
+
+        for (i, (p, s)) in zip(persisted, suppressed).enumerated() {
+            XCTAssertEqual(p.truth, s.truth, "day \(i) truth")
+            XCTAssertEqual(p.rawTruth, s.rawTruth, "day \(i) rawTruth")
+            XCTAssertEqual(p.action, s.action, "day \(i) action")
+            XCTAssertEqual(p.rawRecoveryTruth, s.rawRecoveryTruth, "day \(i) rawRecoveryTruth")
+            XCTAssertEqual(p.confidence, s.confidence, "day \(i) confidence")
+            XCTAssertEqual(p.totalScore, s.totalScore, "day \(i) totalScore")
+            XCTAssertEqual(p.canPushKeyLift, s.canPushKeyLift, "day \(i) canPushKeyLift")
+            try assertSameFields(p, s, stripConsecutiveDays: true, "day \(i)")
+        }
+    }
+
+    // Live-path equivalence: a live-style evaluate after the weekly loop must be unaffected by
+    // whether the weekly loop persisted. NO exemption for consecutiveDays here (flags still a set).
+    // The stored log afterwards must have equal decoded records and be byte-equal when re-encoded
+    // with sorted keys (raw bytes differ only by JSON key order, so they are not compared).
+    func testLiveEvaluateAfterWeeklyLoopIsIdenticalPersistingVsSuppressed() throws {
+        let a = runScenario(suppressedWeekly: false, thenLive: true)
+        let b = runScenario(suppressedWeekly: true, thenLive: true)
+        let liveA = try XCTUnwrap(a.live)
+        let liveB = try XCTUnwrap(b.live)
+
+        try assertSameFields(liveA, liveB, stripConsecutiveDays: false, "live")
+        XCTAssertEqual(liveA.truth, liveB.truth)
+        XCTAssertEqual(liveA.drivers, liveB.drivers, "live drivers incl. consecutiveDays")
+
+        // The stored log must be the same after the live call. Raw bytes are NOT comparable across
+        // two separate encodes: JSONEncoder without .sortedKeys emits keys in unspecified order
+        // (observed: same-length Data, different key order). So compare the decoded records and the
+        // sorted-keys re-encoding, which are order-independent.
+        let logA = try JSONDecoder().decode([DailyVerdictRecord].self, from: try XCTUnwrap(a.logData))
+        let logB = try JSONDecoder().decode([DailyVerdictRecord].self, from: try XCTUnwrap(b.logData))
+        XCTAssertEqual(logA, logB, "stored verdict log differs after the live call")
+        let sorted = JSONEncoder()
+        sorted.outputFormatting = [.sortedKeys]
+        XCTAssertEqual(try sorted.encode(logA), try sorted.encode(logB))
+    }
 }
