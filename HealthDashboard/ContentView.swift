@@ -863,8 +863,9 @@ struct ContentView: View {
                 dxaScans = SharedStore.loadDXAScans()
                 bodyMeasurements = SharedStore.loadBodyMeasurements()
                 // One explicit evaluation from cached history — holds until the
-                // post-fetch assignment in backfill7Days() replaces it.
-                readiness = ReadinessEngine.evaluate(history: history, manual: manual)
+                // post-fetch assignment in backfill7Days() replaces it. Cached history can still
+                // end yesterday on the first open of a day; that evaluation is shown but not persisted.
+                readiness = LiveEvaluationPolicy.evaluateForLive(history: history, manual: manual)
             }
             .sheet(isPresented: $showDXAForm) {
                 DXAFormView(initial: nil) { scan in
