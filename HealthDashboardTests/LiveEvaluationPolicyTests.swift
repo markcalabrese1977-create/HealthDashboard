@@ -154,4 +154,76 @@ final class LiveEvaluationPolicyTests: XCTestCase {
         XCTAssertEqual(live.drivers.map { $0.isNegative }, plain.drivers.map { $0.isNegative })
         XCTAssertEqual(live.drivers.map { $0.impact }, plain.drivers.map { $0.impact })
     }
+
+    // MARK: 6. needsReevaluation truth table
+
+    func testNeedsReevaluationTruthTable() {
+        let t0 = Date(timeIntervalSince1970: 1_790_000_000)
+        let t1 = t0.addingTimeInterval(60)
+
+        XCTAssertTrue(LiveEvaluationPolicy.needsReevaluation(previousUpdatedAt: t0, currentUpdatedAt: t1), "newer")
+        XCTAssertFalse(LiveEvaluationPolicy.needsReevaluation(previousUpdatedAt: t1, currentUpdatedAt: t1), "equal")
+        XCTAssertFalse(LiveEvaluationPolicy.needsReevaluation(previousUpdatedAt: t1, currentUpdatedAt: t0), "older")
+        XCTAssertTrue(LiveEvaluationPolicy.needsReevaluation(previousUpdatedAt: nil, currentUpdatedAt: t0), "nil previous")
+        XCTAssertFalse(LiveEvaluationPolicy.needsReevaluation(previousUpdatedAt: t0, currentUpdatedAt: nil), "nil current")
+        XCTAssertFalse(LiveEvaluationPolicy.needsReevaluation(previousUpdatedAt: nil, currentUpdatedAt: nil), "both nil")
+    }
+
+    // MARK: 7. THE INVARIANT: a display re-evaluation reproduces what the persisting writer produced
+    //
+    // hkObserver (the writer of record) evaluates and persists E1. The card then re-evaluates the same
+    // inputs for display (E2, never persisting). E2 must equal E1 in EVERY field, including
+    // drivers[].consecutiveDays: E2 reads the slot E1 just wrote, so the streak counts agree.
+    // `flags` is compared as a set (its order is nondeterministic: Dictionary(grouping:).keys).
+
+    private func fields(_ r: ReadinessResult) throws -> [String: Any] {
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.sortedKeys]
+        var j = try JSONSerialization.jsonObject(with: enc.encode(r)) as! [String: Any]
+        if let flags = j["flags"] as? [String] { j["flags"] = flags.sorted() }
+        return j
+    }
+
+    func testDisplayReevaluationEqualsThePersistingEvaluationInEveryField() throws {
+        let h = history(endingDaysFromToday: 0)
+
+        clearLog(); seedYesterdayRecord()
+        let e1 = ReadinessEngine.evaluate(history: h, manual: .default)        // as hkObserver would have
+        let logAfterE1 = SharedStore.loadVerdictLog()
+        let dataAfterE1 = logData()
+
+        let e2 = LiveEvaluationPolicy.evaluateForDisplay(history: h, manual: .default)
+
+        let f1 = try fields(e1), f2 = try fields(e2)
+        for key in Set(f1.keys).union(f2.keys).sorted() {
+            XCTAssertTrue(
+                NSDictionary(dictionary: [key: f1[key] ?? NSNull()]).isEqual(to: [key: f2[key] ?? NSNull()]),
+                "field '\(key)': E1=\(String(describing: f1[key])) E2=\(String(describing: f2[key]))"
+            )
+        }
+        XCTAssertEqual(e1.drivers, e2.drivers, "drivers including consecutiveDays")
+        XCTAssertFalse(e1.drivers.isEmpty, "fixture must exercise drivers")
+        XCTAssertTrue(e1.drivers.contains { $0.consecutiveDays > 0 }, "fixture must exercise consecutiveDays")
+
+        // The display evaluation changed nothing in the store.
+        XCTAssertEqual(SharedStore.loadVerdictLog(), logAfterE1)
+        XCTAssertEqual(logData(), dataAfterE1, "same stored Data: no re-encode happened")
+    }
+
+    // MARK: 8. evaluateForDisplay never touches the log
+
+    func testDisplayEvaluationNeverCreatesTheLogOnAnEmptyLog() {
+        clearLog()
+        _ = LiveEvaluationPolicy.evaluateForDisplay(history: history(endingDaysFromToday: 0), manual: .default)
+        XCTAssertNil(logData())
+    }
+
+    func testDisplayEvaluationNeverModifiesAnExistingLog() {
+        clearLog(); seedYesterdayRecord()
+        let before = logData()
+        // Even with history that ends today (which a persisting call WOULD write).
+        _ = LiveEvaluationPolicy.evaluateForDisplay(history: history(endingDaysFromToday: 0), manual: .default)
+        _ = LiveEvaluationPolicy.evaluateForDisplay(history: history(endingDaysFromToday: -1), manual: .default)
+        XCTAssertEqual(logData(), before)
+    }
 }

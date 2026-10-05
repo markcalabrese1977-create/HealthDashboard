@@ -38,4 +38,25 @@ enum LiveEvaluationPolicy {
         }
         return ReadinessEngine.evaluate(history: history, manual: manual)
     }
+
+    /// True when the store holds a strictly newer snapshot than the one the view last rendered: a
+    /// background delivery (hkObserver) saved newer data while the view was on screen. nil previous
+    /// with a non-nil current also counts; a nil current never does.
+    static func needsReevaluation(previousUpdatedAt: Date?, currentUpdatedAt: Date?) -> Bool {
+        guard let current = currentUpdatedAt else { return false }
+        guard let previous = previousUpdatedAt else { return true }
+        return current > previous
+    }
+
+    /// Re-evaluation for DISPLAY ONLY: always suppresses verdict-log persistence. The writer of record
+    /// for this data (hkObserver / postBackfill) already persisted its own verdict; the card just needs
+    /// to show a result consistent with the history it now holds.
+    static func evaluateForDisplay(
+        history: [DailyHealthPoint],
+        manual: ManualReadinessInputs
+    ) -> ReadinessResult {
+        VerdictPersistence.withSuppressedPersistence {
+            ReadinessEngine.evaluate(history: history, manual: manual)
+        }
+    }
 }

@@ -1068,10 +1068,22 @@ struct ContentView: View {
     private func refreshIfStale(maxAgeSeconds: TimeInterval) async {
         guard !isRefreshing else { return }
 
+        let previousUpdatedAt = snapshot.updatedAt
+
         await MainActor.run {
             snapshot = SharedStore.load()
             history = SharedStore.loadHistory()
             manual = SharedStore.loadManual()
+
+            // A background delivery (hkObserver) can save newer data while this view is on screen;
+            // nothing else re-evaluates `readiness`, so the card would keep the older result.
+            // Display-only: the delivery already persisted its own verdict.
+            if LiveEvaluationPolicy.needsReevaluation(previousUpdatedAt: previousUpdatedAt,
+                                                      currentUpdatedAt: snapshot.updatedAt) {
+                var refreshed = LiveEvaluationPolicy.evaluateForDisplay(history: history, manual: manual)
+                refreshed.sleepQuality = readiness.sleepQuality   // not computed by the engine; keep the last composite
+                readiness = refreshed
+            }
         }
 
         let age = Date().timeIntervalSince(snapshot.updatedAt)
