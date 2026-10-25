@@ -564,6 +564,12 @@ struct ReadinessResult: Codable, Equatable {
     // tell a load-caused red (rawRecoveryTruth == .green) from a recovery-caused one.
     //   nil = not populated (snapshots/payloads encoded before this field existed, `.empty`)
     var rawRecoveryTruth: ReadinessStatus? = nil
+
+    // `canPushKeyLift` recomputed with the load term removed (see ReadinessEngine): the same clauses,
+    // with the load-stripped recovery verdict (not gate-held) in place of `truth == .green`, and no
+    // `loadMod` clause. Lets presentation say a no-push day is load-blocked.
+    //   nil = not populated (snapshots/payloads encoded before this field existed, `.empty`)
+    var canPushKeyLiftWithoutLoad: Bool? = nil
 }
 extension ReadinessResult {
     /// Inert placeholder shown only for the instant between view creation and the
