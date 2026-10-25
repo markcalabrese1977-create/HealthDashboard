@@ -12,6 +12,7 @@ struct ReadinessPresentation: Equatable {
 enum ReadinessMessageState {
     case greenPush
     case greenNoPush
+    case greenNoPushLoad    // green, push blocked ONLY by the load term (recovery alone would allow it)
     case yellowIsolated
     case yellowCluster
     case yellowLoad     // yellow with zero negative recovery drivers → load-driven caution
@@ -51,6 +52,10 @@ extension ReadinessResult {
             // Green should not read like a warning state.
             // These are watch items, not the reason for readiness.
             return "Minor watch item: \(negatives.prefix(2).map { driverDisplay($0) }.joined(separator: ", "))"
+
+        case .greenNoPushLoad:
+            // Recovery is fine; the caution is load, not any recovery driver.
+            return "Elevated training load"
 
         case .yellowIsolated:
             if let driver = negatives.first {
@@ -133,6 +138,12 @@ extension ReadinessResult {
 
             if canPushKeyLift {
                 return .greenPush
+            }
+
+            // Not a push day. If recovery alone would have allowed a push, the load term is what
+            // blocked it. nil (snapshots / payloads from before the field existed) keeps the old copy.
+            if canPushKeyLiftWithoutLoad == true {
+                return .greenNoPushLoad
             }
 
             return .greenNoPush
@@ -223,6 +234,12 @@ extension ReadinessResult {
             headline = "Train normally"
             subline = "Not a push day"
             baseExplanation = greenNoPushExplanation(negativeDrivers: negativeDrivers)
+            guidanceButtonTitle = "View training guidance"
+
+        case .greenNoPushLoad:
+            headline = "Train normally"
+            subline = "Not a push day"
+            baseExplanation = ReadinessGreenNoPushLoadCopy.explanation
             guidanceButtonTitle = "View training guidance"
         }
 
