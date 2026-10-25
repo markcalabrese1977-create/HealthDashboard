@@ -32,12 +32,14 @@ struct WeeklySummary {
     let narrative: String
     let avgReadinessScore: Double?
     let readinessColor: ReadinessStatus
+    /// Training / strength load for the completed days of this week vs the same days last week.
+    /// Additive: nil when there are no completed days yet or a window day is missing from history.
+    var loadComparison: LoadWeekComparison? = nil
 
-    static func build(history: [DailyHealthPoint], manual: ManualReadinessInputs) -> WeeklySummary? {
+    static func build(history: [DailyHealthPoint], manual: ManualReadinessInputs, today: Date = Date()) -> WeeklySummary? {
         guard history.count >= 7 else { return nil }
 
         let cal = Calendar(identifier: .iso8601) // Monday-anchored
-                let today = Date()
                 let fmt = DateFormatter()
                 fmt.locale = Locale(identifier: "en_US_POSIX")
                 fmt.dateFormat = "yyyy-MM-dd"
@@ -135,7 +137,8 @@ struct WeeklySummary {
             metrics: metrics,
             narrative: narrative,
             avgReadinessScore: avgScore,
-            readinessColor: readinessColor
+            readinessColor: readinessColor,
+            loadComparison: LoadWeekComparison.compute(history: history, today: today)
         )
     }
 
@@ -217,6 +220,142 @@ struct WeeklySummary {
     }
 }
 
+// MARK: - Load comparison (completed days vs the same days last week)
+//
+// Pure: depends only on DailyHealthPoint, a reference date and a calendar. No readiness engine, no
+// stored verdicts. TRIMP and mechanical load come straight from the history points, with nil days
+// counted as 0 (a rest day and "no data" are indistinguishable in the history).
+
+struct LoadWeekComparison: Equatable {
+    /// Completed days compared (Monday through yesterday).
+    let completedDays: Int
+    /// Inclusive first and last day of each window, for the caption.
+    let thisWindowStart: Date
+    let thisWindowEnd: Date
+    let priorWindowStart: Date
+    let priorWindowEnd: Date
+
+    let trimpThis: Double
+    let trimpPrior: Double
+    let strengthThis: Double
+    let strengthPrior: Double
+
+    /// A row shows only if some point anywhere in the history has a positive value for it, so a user
+    /// with no EP data (or no HR-backed workouts) never sees a permanent zero row.
+    let showsTrimp: Bool
+    let showsStrength: Bool
+
+    var trimpDelta: Double { trimpThis - trimpPrior }
+    var strengthDelta: Double { strengthThis - strengthPrior }
+
+    enum DeltaDisplay: Equatable {
+        case dash
+        case up(Double)
+        case down(Double)
+    }
+
+    /// Same dayISO construction the engine and HealthKit use (Calendar.current components, %04d-%02d-%02d).
+    static func dayISO(_ date: Date) -> String {
+        let c = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02d", c.year ?? 1970, c.month ?? 1, c.day ?? 1)
+    }
+
+    /// nil when there are no completed days yet (Monday), or when ANY of the 2n window days has no
+    /// point in `history`. Today's own (partial) point is never part of either window.
+    static func compute(
+        history: [DailyHealthPoint],
+        today: Date,
+        calendar: Calendar = Calendar(identifier: .iso8601)   // Monday-anchored, same as build
+    ) -> LoadWeekComparison? {
+        guard let thisWeekStart = calendar.dateInterval(of: .weekOfYear, for: today)?.start,
+              let priorWeekStart = calendar.date(byAdding: .weekOfYear, value: -1, to: thisWeekStart),
+              let n = calendar.dateComponents([.day], from: thisWeekStart, to: calendar.startOfDay(for: today)).day,
+              n > 0
+        else { return nil }
+
+        let byDay = Dictionary(history.map { ($0.dayISO, $0) }, uniquingKeysWith: { _, last in last })
+
+        var thisPoints: [DailyHealthPoint] = []
+        var priorPoints: [DailyHealthPoint] = []
+        for k in 0..<n {
+            guard let thisDay = calendar.date(byAdding: .day, value: k, to: thisWeekStart),
+                  let priorDay = calendar.date(byAdding: .day, value: k, to: priorWeekStart),
+                  let t = byDay[dayISO(thisDay)],
+                  let p = byDay[dayISO(priorDay)]
+            else { return nil }
+            thisPoints.append(t)
+            priorPoints.append(p)
+        }
+
+        guard let thisEnd = calendar.date(byAdding: .day, value: n - 1, to: thisWeekStart),
+              let priorEnd = calendar.date(byAdding: .day, value: n - 1, to: priorWeekStart)
+        else { return nil }
+
+        func sum(_ pts: [DailyHealthPoint], _ kp: KeyPath<DailyHealthPoint, Double?>) -> Double {
+            pts.reduce(0) { $0 + ($1[keyPath: kp] ?? 0) }
+        }
+
+        return LoadWeekComparison(
+            completedDays: n,
+            thisWindowStart: thisWeekStart,
+            thisWindowEnd: thisEnd,
+            priorWindowStart: priorWeekStart,
+            priorWindowEnd: priorEnd,
+            trimpThis: sum(thisPoints, \.dailyTrimp),
+            trimpPrior: sum(priorPoints, \.dailyTrimp),
+            strengthThis: sum(thisPoints, \.mechanicalLoad),
+            strengthPrior: sum(priorPoints, \.mechanicalLoad),
+            showsTrimp: history.contains { ($0.dailyTrimp ?? 0) > 0 },
+            showsStrength: history.contains { ($0.mechanicalLoad ?? 0) > 0 }
+        )
+    }
+
+    /// Neutral by design (no better/worse judgement). A dash when the change is within 5% of the prior
+    /// total, inclusive, or both are zero; otherwise an arrow by sign. A zero prior with a non-zero
+    /// current is a real change. Compared as |delta| * 20 <= |prior| to avoid float fuzz at exactly 5%.
+    static func deltaDisplay(this: Double, prior: Double) -> DeltaDisplay {
+        let delta = this - prior
+        if abs(delta) * 20.0 <= abs(prior) { return .dash }
+        return delta > 0 ? .up(delta) : .down(-delta)
+    }
+
+    /// "Load (completed days): Oct 12 – Oct 13 vs Oct 5 – Oct 6"; a single day collapses to
+    /// "Oct 12 vs Oct 5". Formatted like the card's date-range label ("MMM d", " – " between ends),
+    /// but built here from the four dates so it can be tested with fixed ones.
+    static func caption(
+        thisStart: Date, thisEnd: Date, priorStart: Date, priorEnd: Date,
+        calendar: Calendar = Calendar(identifier: .iso8601),
+        locale: Locale = .current
+    ) -> String {
+        let f = DateFormatter()
+        f.locale = locale
+        f.calendar = calendar
+        f.timeZone = calendar.timeZone
+        f.dateFormat = "MMM d"
+
+        func window(_ a: Date, _ b: Date) -> String {
+            let first = f.string(from: a), last = f.string(from: b)
+            return first == last ? first : "\(first) – \(last)"
+        }
+        return "Load (completed days): \(window(thisStart, thisEnd)) vs \(window(priorStart, priorEnd))"
+    }
+
+    var caption: String {
+        Self.caption(thisStart: thisWindowStart, thisEnd: thisWindowEnd,
+                     priorStart: priorWindowStart, priorEnd: priorWindowEnd)
+    }
+
+    /// Whole number with grouping separators, e.g. "15,853".
+    static func formatTotal(_ value: Double, locale: Locale = .current) -> String {
+        let f = NumberFormatter()
+        f.locale = locale
+        f.numberStyle = .decimal
+        f.usesGroupingSeparator = true
+        f.maximumFractionDigits = 0
+        return f.string(from: NSNumber(value: value.rounded())) ?? "\(Int(value.rounded()))"
+    }
+}
+
 // MARK: - Weekly summary card view
 
 struct WeeklySummaryCard: View {
@@ -278,6 +417,11 @@ struct WeeklySummaryCard: View {
                             Divider().opacity(0.4).padding(.leading, 4)
                         }
                     }
+                }
+
+                // Training Load / Strength Load: completed days vs the same days last week.
+                if let load = summary.loadComparison, load.showsTrimp || load.showsStrength {
+                    LoadWeekRows(load: load)
                 }
             }
         }
@@ -390,5 +534,82 @@ private struct WeekMetricRow: View {
                 .foregroundStyle(.secondary)
         }
         .padding(.vertical, 7)
+    }
+}
+
+// MARK: - Load rows (neutral styling)
+
+private struct LoadWeekRows: View {
+    let load: LoadWeekComparison
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Divider().opacity(0.4).padding(.leading, 4)
+
+            if load.showsTrimp {
+                LoadWeekRow(title: "Training Load", this: load.trimpThis, prior: load.trimpPrior)
+            }
+            if load.showsTrimp && load.showsStrength {
+                Divider().opacity(0.4).padding(.leading, 4)
+            }
+            if load.showsStrength {
+                LoadWeekRow(title: "Strength Load", this: load.strengthThis, prior: load.strengthPrior)
+            }
+
+            Text(load.caption)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .padding(.top, 2)
+        }
+    }
+}
+
+private struct LoadWeekRow: View {
+    let title: String
+    let this: Double
+    let prior: Double
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .frame(width: 72, alignment: .leading)
+
+            Text(LoadWeekComparison.formatTotal(this))
+                .font(.caption.weight(.semibold))
+                .monospacedDigit()
+
+            Spacer()
+
+            switch LoadWeekComparison.deltaDisplay(this: this, prior: prior) {
+            case .dash:
+                Text("–")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+            case .up(let d):
+                deltaLabel(icon: "arrow.up", amount: d)
+            case .down(let d):
+                deltaLabel(icon: "arrow.down", amount: d)
+            }
+
+            Text("vs same days last week")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 7)
+    }
+
+    private func deltaLabel(icon: String, amount: Double) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: icon)
+                .font(.caption2.weight(.semibold))
+            Text(LoadWeekComparison.formatTotal(amount))
+                .font(.caption.weight(.medium))
+                .monospacedDigit()
+        }
+        .foregroundStyle(.secondary)   // neutral: more or less load is not judged good or bad
     }
 }
