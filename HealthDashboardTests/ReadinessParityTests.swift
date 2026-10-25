@@ -167,6 +167,7 @@ final class ReadinessParityTests: XCTestCase {
             // ReadinessResult: every pre-existing field, exact (new field excluded here).
             var got = try XCTUnwrap(out["result"] as? [String: Any])
             got.removeValue(forKey: "rawRecoveryTruth")
+            got.removeValue(forKey: "canPushKeyLiftWithoutLoad")   // added after the golden; asserted in CanPushWithoutLoadTests
             XCTAssertEqual(got as NSDictionary, try XCTUnwrap(want["result"] as? NSDictionary),
                            "\(f.name): ReadinessResult drifted from main golden")
         }

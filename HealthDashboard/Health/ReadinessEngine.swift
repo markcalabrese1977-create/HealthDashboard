@@ -518,6 +518,22 @@ enum ReadinessEngine {
             && !manual.isSick
             && loadMod >= -1
 
+        // Push permission with the LOAD term removed: exactly the clauses above, except
+        //  (a) the verdict clause uses the load-stripped recovery verdict and is not held by the
+        //      one-day confirmation gate (a gate hold is not a load effect), and
+        //  (b) the `loadMod` clause is not read.
+        // Display-only: lets the card tell a load-blocked "not a push day" from a recovery- or
+        // flag-blocked one. Not stored in the verdict log and not read by anything in the engine.
+        let canPushKeyLiftWithoutLoad: Bool =
+            (rawRecoveryTruth == .green && !(truth == .yellow && rawTruth == .green))
+            && !hrvDown10
+            && !rhrUp3
+            && !tempUp03
+            && !rrUp10
+            && !sleepEffLow
+            && pain <= 2
+            && !manual.isSick
+
         // Output strings. Single source of truth: the card (ReadinessPresentation) and the
         // Watch (WatchRootView reads actionTitle/actionMessage directly off the result) both
         // inherit these — so the gate-hold narration is authored HERE, not in presentation().
@@ -768,7 +784,8 @@ enum ReadinessEngine {
             cardioLoad: cardioLoad,
             mechanicalLoad: mechanicalLoad,
             totalScore: total,
-            rawRecoveryTruth: rawRecoveryTruth
+            rawRecoveryTruth: rawRecoveryTruth,
+            canPushKeyLiftWithoutLoad: canPushKeyLiftWithoutLoad
         )
     }
 }
