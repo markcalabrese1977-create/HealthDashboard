@@ -33,11 +33,10 @@ struct WeeklySummary {
     let avgReadinessScore: Double?
     let readinessColor: ReadinessStatus
 
-    static func build(history: [DailyHealthPoint], manual: ManualReadinessInputs) -> WeeklySummary? {
+    static func build(history: [DailyHealthPoint], manual: ManualReadinessInputs, today: Date = Date()) -> WeeklySummary? {
         guard history.count >= 7 else { return nil }
 
         let cal = Calendar(identifier: .iso8601) // Monday-anchored
-                let today = Date()
                 let fmt = DateFormatter()
                 fmt.locale = Locale(identifier: "en_US_POSIX")
                 fmt.dateFormat = "yyyy-MM-dd"
