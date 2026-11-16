@@ -15,7 +15,7 @@ From concept to buildable. A phased roadmap that honors the strict methodology: 
 ## Status (as of 2026-11-16)
 
 - **Purpose:** daily readiness (core) plus a longevity layer limited to what Apple Health doesn't know.
-- **Strategic decision (2026-11-16):** Apple's iOS 27.3 Health app ships a Longevity tab with Health Age (inputs: VO2 max, RHR, sleep, HRV; labs A1c/LDL; Quest lab booking). HD will **not** replicate it. Sources cited by the owner: apple.com/newsroom/2026/09/apple-advances-health-and-fitness-capabilities-using-apple-intelligence/ and 9to5mac iOS 27.3 beta coverage (not independently verified in this repo).
+- **Strategic decision (2026-11-16):** Apple's iOS 27.3 Health app ships a Longevity tab with Health Age (inputs: VO2 max, RHR, sleep, HRV; labs A1c/LDL; Quest lab booking). HD will **not** replicate it. Sources: apple.com/newsroom/2026/09/apple-advances-health-and-fitness-capabilities-using-apple-intelligence/ and 9to5mac iOS 27.3 beta coverage (verified 2026-11-16 via Apple Newsroom (Sept 2026) and 9to5Mac iOS 27.3 beta coverage).
 - **SDK check (2026-11-16):** only Xcode 27.2 / iOS 27.2 SDK is installed (`xcodebuild -showsdks`); **no iOS 27.3 SDK**, nothing downloaded. In the 27.2 SDK `HealthKit.tbd` exports `_HKFeatureIdentifierHealthAge` (line 8194) and `_HKFeatureAvailabilityContextReadiness` (line 8112), but neither the public `Headers/` nor the `HealthKit.swiftmodule` mention HealthAge, Longevity or Readiness — i.e. feature-availability plumbing, not a public data API. Availability annotations: none found. A public Health Age read API in 27.3 is **not verified** (see L4).
 - **Hold on `evaluate()`:** discharged 8/26 (see Archive → "✅ RESOLVED (2026-08-26)"). Gating is per-item exit gates, plus the methodology invariants below.
 - **Where things stand:**
@@ -169,6 +169,8 @@ Surface the existing DXA code (`DXAScan` and body-measurement stores in `SharedH
 
 Display it as Apple's number **if** HealthKit exposes it. **Status: not verified / default not applicable.** Only the iOS 27.2 SDK is installed; it exposes no public Health Age API (symbols only in `HealthKit.tbd`, no header or swiftinterface declaration). Re-check when an iOS 27.3 SDK is available; do not build against private symbols.
 
+27.2 SDK exports HKFeatureIdentifierHealthAge (feature-availability family, not a data type). Expect at most an availability/status check, not the Health Age value.
+
 ---
 
 ## Ops
@@ -181,7 +183,7 @@ Display it as Apple's number **if** HealthKit exposes it. **Status: not verified
 
 ### Pending merges
 
-- `readiness-display-context` → `main`, after device checks (build from `HealthDashboard-main`; Sleep tile reads "vs target"; warm-room toggle persists; pain/sick clear the next day).
+- `readiness-display-context` → `main`. Remaining device checks: (a) pain/sick set on day N reads default on day N+1; (b) a manual edit before the morning HealthKit fetch does not overwrite today's verdict-log slot with yesterday's verdict. Tile 'vs target' and warm-room toggle persistence: verified 11/16.
 - EP `feat/in-app-guide` → `main`, after the known-failures check (9 failing tests, all listed in `Tests/known_failures.txt`; `ReorderTests.test_J4…` is the flaky one).
 
 ### Decisions
