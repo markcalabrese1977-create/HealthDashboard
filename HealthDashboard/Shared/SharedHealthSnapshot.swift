@@ -110,6 +110,14 @@ struct DailyHealthPoint: Codable, Equatable, Identifiable {
     var leanMassLb: Double?             // pounds (proxy for “muscle mass”)
 }
 
+// MARK: - Night context tags (capture/log only; no scoring effect)
+
+/// Per-night context that may explain a signal (e.g. a heated room inflating wrist temp).
+/// Stored by SharedStore.setNightContextTag; nothing in the engine reads it.
+enum NightContextTag: String, Codable, CaseIterable {
+    case warmRoom
+}
+
 // MARK: - Manual readiness inputs (minimal)
 
 struct ManualReadinessInputs: Codable, Equatable {
@@ -714,6 +722,10 @@ enum SharedStore {
     static let verdictLogKey = "health.readiness.verdictLog.v1"
     private static let verdictLogMaxDays = 30
 
+    // Per-night context tags (dateISO -> NightContextTag raw values). Capture/log only.
+    static let nightContextKey = "health.readiness.nightContext.v1"
+    private static let nightContextMaxDays = 60
+
     // Sleep-axis diagnostic log (side store for validation; not Watch-bound)
     static let sleepAxisLogKey = "health.sleep.axisLog.v1"
     private static let sleepAxisLogMaxDays = 30
@@ -1119,6 +1131,36 @@ enum SharedStore {
 
         log("🔢 consecutiveDaysActive(asOf: \(dateISO)) -> \(count)")
         return count
+    }
+
+    // MARK: Night context tags
+
+    /// Raw map dateISO -> tag raw values. Raw strings are kept as stored so a tag unknown to this
+    /// build (e.g. written by a newer one) survives a read-modify-write.
+    static func loadNightContext() -> [String: [String]] {
+        guard let d = defaults(),
+              let data = d.data(forKey: nightContextKey),
+              let decoded = try? JSONDecoder().decode([String: [String]].self, from: data)
+        else { return [:] }
+        return decoded
+    }
+
+    static func nightContextTags(for date: Date = Date()) -> Set<NightContextTag> {
+        let raw = loadNightContext()[verdictDayFormatter.string(from: date)] ?? []
+        return Set(raw.compactMap(NightContextTag.init(rawValue:)))
+    }
+
+    static func setNightContextTag(_ tag: NightContextTag, on: Bool, for date: Date = Date()) {
+        guard let d = defaults() else { return }
+        var all = loadNightContext()
+        let key = verdictDayFormatter.string(from: date)
+        var tags = Set(all[key] ?? [])
+        if on { tags.insert(tag.rawValue) } else { tags.remove(tag.rawValue) }
+        all[key] = tags.isEmpty ? nil : tags.sorted()
+        if all.count > nightContextMaxDays {
+            for k in all.keys.sorted().dropLast(nightContextMaxDays) { all[k] = nil }
+        }
+        if let data = try? JSONEncoder().encode(all) { d.set(data, forKey: nightContextKey) }
     }
 
     // MARK: Sleep-axis diagnostic log

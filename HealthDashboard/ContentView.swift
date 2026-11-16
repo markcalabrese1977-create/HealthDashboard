@@ -7,6 +7,7 @@ struct ContentView: View {
     @State private var snapshot = SharedStore.load()
     @State private var history: [DailyHealthPoint] = SharedStore.loadHistory()
     @State private var manual = SharedStore.loadManual()
+    @State private var warmRoom = SharedStore.nightContextTags().contains(.warmRoom)
     @State private var showActionDialog = false
 
     // DXA (manual snapshots)
@@ -439,6 +440,14 @@ struct ContentView: View {
                                     Text("Turn on only if you’re clearly sick (feverish, body aches, chest crud, heavy fatigue).")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
+
+                                    Toggle("Warm room / heat on (last night)", isOn: Binding(
+                                        get: { warmRoom },
+                                        set: {
+                                            warmRoom = $0
+                                            SharedStore.setNightContextTag(.warmRoom, on: $0)
+                                        }
+                                    ))
                                 }
                                 .padding(.top, 6)
                             } label: {
@@ -531,6 +540,7 @@ struct ContentView: View {
                                                             sparkValues: recoverySparklines.sleep,
                                                             delta: readiness.sleepDelta,
                                                             deltaUnit: "h",
+                                                            deltaSuffix: "vs target",
                                                             higherIsBetter: true,
                                                             metric: .sleep,
                                                             history: history,
@@ -860,6 +870,7 @@ struct ContentView: View {
                 snapshot = SharedStore.load()
                 history = SharedStore.loadHistory()
                 manual = SharedStore.loadManual()
+                warmRoom = SharedStore.nightContextTags().contains(.warmRoom)
                 dxaScans = SharedStore.loadDXAScans()
                 bodyMeasurements = SharedStore.loadBodyMeasurements()
                 // One explicit evaluation from cached history — holds until the
@@ -881,6 +892,7 @@ struct ContentView: View {
             }
             .onChange(of: scenePhase) { _, newPhase in
                 guard newPhase == .active else { return }
+                warmRoom = SharedStore.nightContextTags().contains(.warmRoom)
                 Task { await refreshIfStale(maxAgeSeconds: staleThresholdSeconds) }
             }
             .task {
@@ -1331,6 +1343,7 @@ fileprivate struct MetricTile: View {
     var sparkValues: [Double]? = nil
     var delta: Double? = nil
     var deltaUnit: String = ""
+    var deltaSuffix: String = "vs avg"
     var higherIsBetter: Bool = true
     var metric: HealthMetric? = nil
     var history: [DailyHealthPoint] = []
@@ -1399,7 +1412,7 @@ fileprivate struct MetricTile: View {
                     : favorable ? Color.green.opacity(0.8) : Color.orange.opacity(0.9)
                 let sign = d > 0 ? "+" : ""
                 let numStr = String(format: abs(d) < 10 ? "%.1f" : "%.0f", d)
-                Text("\(sign)\(numStr) \(deltaUnit) vs avg")
+                Text("\(sign)\(numStr) \(deltaUnit) \(deltaSuffix)")
                     .font(.caption2.weight(.medium))
                     .foregroundColor(color)
             }
