@@ -214,7 +214,9 @@ Do NOT let any downstream Phase 8 step assume a working composite until this
 is resolved. [Superseded by the 8/26 RESOLVED note: resolved as "park as display" —
 the composite never enters the verdict, so no step may assume one.]
 
-### 🔬 Composite rework agenda — efficiency operationalization + driver status (2026-08-08)
+### 🔬 Composite rework agenda — efficiency operationalization + driver status (2026-08-08) (CLOSED 8/26 — see RESOLVED note)
+
+[Superseded by the 8/26 RESOLVED note: no rework session is pending; Q1/Q2 are CLOSED.]
 
 Two scientific questions to resolve DURING the composite rework session, both
 surfaced by a dashboard-routing bug but properly belonging to the scoring
@@ -252,6 +254,8 @@ Q2 — Should efficiency drive the readiness verdict at all?
   presentation, leave the scoring alone.
 - This is an evaluate()-adjacent scoring change → belongs to the rework decision,
   NOT to be made off a single dashboard complaint. Parked here deliberately.
+  [Superseded by the 8/26 RESOLVED note: the rework decision was made — composite
+  parked as display, so this scoring change is moot.]
 
 Note: the dashboard-routing bug that surfaced these (efficiency detractor routes
 to the composite "Sleep Quality" tile, which shows composite score vs composite
@@ -368,8 +372,8 @@ Order is priority order. Each item ships alone, tests red first, with `Readiness
 
 ## Parked items / open-question ledger
 
-- **Sleep composite rework decision** — null validation result; decide rework (drop Efficiency as scored, rebuild around Architecture/Consistency, re-validate) vs. park, before any downstream step assumes a working composite.
-- **Efficiency operationalization (Q1) + efficiency-as-driver (Q2)** — resolve inside the composite rework session.
+- **Sleep composite rework decision** — null validation result; decide rework (drop Efficiency as scored, rebuild around Architecture/Consistency, re-validate) vs. park, before any downstream step assumes a working composite. **RESOLVED 8/26** — parked as display; composite will not drive the verdict; driver swap RETIRED. See the ✅ RESOLVED (2026-08-26) note in Phase 8.
+- **Efficiency operationalization (Q1) + efficiency-as-driver (Q2)** — resolve inside the composite rework session. **CLOSED** — no composite axis drives the verdict, so both are moot (see "Consequences" in the 8/26 RESOLVED note). The sleep-efficiency detractor remains a ReadinessEngine signal on its own terms.
 - **Driver-aware gate fix** — commit + branch placement decision.
 - **Dashboard routing bug** — presentation-only fix; independent of the scoring questions.
 - **VO2max** — real-capture HR check → push + PR; edit-window display-anchor fix.
