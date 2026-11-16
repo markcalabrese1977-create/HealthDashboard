@@ -926,7 +926,7 @@ struct ContentView: View {
         // explicitly, since readiness is no longer recomputed on every render.
         // Preserve the last-computed sleep composite: manual edits don't change sleep,
         // and segments aren't re-fetched here, so carry it over rather than dropping to nil.
-        var reeval = ReadinessEngine.evaluate(history: history, manual: manual)
+        var reeval = LiveEvaluationPolicy.evaluateForManualEdit(history: history, manual: manual)
         reeval.sleepQuality = readiness.sleepQuality
         readiness = reeval
 
