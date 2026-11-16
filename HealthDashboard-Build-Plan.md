@@ -314,6 +314,53 @@ Consequences:
 - The validation hold on ReadinessEngine.evaluate() that gated all of this is now
   fully discharged — its purpose (decide the driver swap) is complete.
 
+### 🌡️ Readiness signal weighting (from 11/16 recon)
+
+Status: GATED (Phase 8) — every item below edits `ReadinessEngine.evaluate()`; spec only, nothing implemented. Upstream/orthogonal pieces already landed on `readiness-display-context` (sleep tile/row target parity, night-context tag store + warm-room toggle, dated pain/sick expiry, `persistManual` log-write suppression, query D diagnostic `SharedStore.dumpSubThresholdYellows()`).
+
+Background:
+- The 11/16 yellow came from wrist temp scoring −3 (|Δ| > 0.7, `ReadinessEngine.swift:214`, no corroboration) plus HRV −1 and sleep −1 fillers, via the score path (`recoveryScore ≤ −4`, line 407) — not the cluster path (`clusterCount` was ~1).
+- The temp cause was environmental (heated room). RHR −0.2 and RR −0.8 scored 0; nothing else corroborated.
+- One heavily weighted, uncorroborated signal plus two sub-threshold fillers reached yellow. Intended outcome for that night: green + a temp watch flag.
+
+Order is priority order. Each item ships alone, tests red first, with `ReadinessParityGolden.swift` regenerated per item (see Cross-cutting).
+
+**C3 — Temp corroboration (FIRST)**
+- Named constants: `tempWatchMagnitudeC = 0.7`, `tempSustainDays = 3`.
+- Temp score and `tempUp03` count toward `recoveryScore` / `clusterCount` only if (|Δ| ≥ `tempWatchMagnitudeC` AND streak ≥ `tempSustainDays`) OR `rhrUp3` OR `rrUp10`. Otherwise emit a "Wrist Temp ↑ (watch)" flag only, score 0.
+- Streak is computed from `history`, not the verdict log (the log is capped at 30 days and is written as a side effect of `evaluate()`).
+- Keep the rolling 28-day median baseline (environment and season shift it).
+- Decision required: does the watch flag still block `canPushKeyLift` (line 515)? Default: no.
+- Later phase: `NightContextTag.warmRoom` downgrades temp to watch-only.
+- Also fix: `wristTempDeltaC` holds absolute °C (`HealthKitManager.swift:472`). Rename it or correct the comment at `SharedHealthSnapshot.swift:91` (and the lines above it, which describe it as a deviation near 0).
+- Exit gate: 11/16-style inputs (temp +1.3, RHR/RR near baseline) produce no temp score and a watch flag; temp with RHR or RR corroboration, or sustained ≥ 3 days at ≥ 0.7, still scores.
+
+**C4 — Score-path gate**
+- A signal's score contributes to `recoveryScore` only if its own cluster flag is true; otherwise it contributes 0 and is surfaced as a minor driver.
+- Remove `forceYellow` (`clusterCount ≥ 2`, line 388) if line 407 subsumes it.
+- Expected 11/16 outcome with C3 + C4: green + temp watch.
+- Validate with query D (`SharedStore.dumpSubThresholdYellows()`) before and after over the 30-day log: `scoreOnly` and `zeroFlag` should fall to ~0.
+- Exit gate: no yellow reachable from signals that each sit below their own flag threshold; parity goldens regenerated and reviewed line by line.
+
+**C1 — Fixed sleep need**
+- `ReadinessTuning.sleepNeedHours = 7.5` replaces `max(7.0, sleepBase ?? 7.0)` at line 102.
+- Decision required: does the +1 recovery-night promotion (line 180) use `sleepBase` or the constant? One sleep reference per signal.
+- Re-baseline `sleepShort1` (line 334) and the −1/−2/−3 score bands (lines 174-177) against the new target.
+- Rationale: the sleep composite carries no next-day signal (partial r ≈ +0.06); the tile and row already read `sleepDelta` (vs target), so the target should be a stated need, not a rolling median.
+- Exit gate: tile, row and verdict all derive from the one target; no "vs avg" wording remains.
+
+**C2 — HRV smallest worthwhile change (LAST)**
+- Prerequisite: resolve what the HRV series is. HealthKit HRV is SDNN (sparse spot readings), not rMSSD — confirm what `hrvMS` ingests, and document what the "HRV (Sleep) — verified sleep window" tile computes.
+- Then: `hrvSWCMultiplier = 0.5`; score only when |Δ ln(HRV)| > `hrvSWCMultiplier` × rolling SD of ln(HRV) over the baseline slice, with a named minimum-sample-count constant below which the legacy % bands apply.
+- Delete the dead −2/−3 branches (line 144 clamps all negatives to −1).
+- Exit gate: HRV series identity documented; SWC threshold reproduces the intended 11/16 outcome (−6.8% on a ~23.6 ms baseline does not score unless it clears 0.5 × SD).
+
+**Cross-cutting**
+- Add per-signal scores to `DailyVerdictRecord` (additive, decode-safe like `rawRecoveryTruth`) so before/after can be measured instead of inferred. Written inside `evaluate()`, so gated with the rest; do this before C3 so C3's effect is measurable.
+- Parity goldens (`ReadinessParityGolden.swift`) will need regeneration — regenerate per item, not once at the end.
+- History note: the RHR cluster threshold moved 4.0 → 3.0 bpm in `206637e` (2026-07-04); the log key stays `rhrUp4`. Pre-2026-07-04 `rhrUp4` flags used the 4.0 threshold — account for it when reading the log.
+- Data collection now: toggle the warm-room tag nightly while the heat is on (Reality check → "Warm room / heat on (last night)").
+
 ---
 
 ## Parked items / open-question ledger
