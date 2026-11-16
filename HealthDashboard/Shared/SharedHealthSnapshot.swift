@@ -1067,6 +1067,45 @@ enum SharedStore {
         log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     }
 
+    /// Counts from `dumpSubThresholdYellows`.
+    struct SubThresholdYellowSummary: Equatable {
+        var yellows = 0           // rawTruth == .yellow
+        var recoveryYellows = 0   // ... and the load-stripped verdict is yellow too
+        var loadOnly = 0          // rawTruth yellow, rawRecoveryTruth green (load-driven)
+        var scoreOnly = 0         // recovery yellow with < 2 cluster flags: reached via the score sum
+        var zeroFlag = 0          // scoreOnly with 0 flags: every signal under its own flag threshold
+        var scoreOnlyDates: [String] = []
+    }
+
+    /// Read-only diagnostic (Phase 8 recon, query D). The log stores flags, not per-signal scores, so
+    /// a recovery yellow with fewer than 2 cluster flags can only have come from the score path
+    /// (recoveryScore <= -4). Flag count mirrors the engine's clusterCount; `rhrUp4` is the legacy
+    /// log key for the engine's rhrUp3. Bounded by the 30-day log cap.
+    @discardableResult
+    static func dumpSubThresholdYellows() -> SubThresholdYellowSummary {
+        let entries = loadVerdictLog()
+        func flagCount(_ e: DailyVerdictRecord) -> Int {
+            [e.hrvConcern, e.rhrUp4, e.sleepShort1, e.tempUp03, e.rrUp10, e.sleepEffLow, e.sick]
+                .filter { $0 }.count
+        }
+
+        var s = SubThresholdYellowSummary()
+        for e in entries where e.rawTruth == .yellow {
+            s.yellows += 1
+            guard e.rawRecoveryTruth == .yellow else { s.loadOnly += 1; continue }
+            s.recoveryYellows += 1
+            let n = flagCount(e)
+            if n < 2 {
+                s.scoreOnly += 1
+                s.scoreOnlyDates.append(e.dateISO)
+                if n == 0 { s.zeroFlag += 1 }
+                log("  \(e.dateISO) flags=\(n) recovery=\(e.rawRecovery.map(String.init) ?? "nil") total=\(e.rawTotal)")
+            }
+        }
+        log("🟨 SUB-THRESHOLD YELLOWS — log=\(entries.count) yellows=\(s.yellows) recoveryYellows=\(s.recoveryYellows) loadOnly=\(s.loadOnly) scoreOnly(<2 flags)=\(s.scoreOnly) zeroFlag=\(s.zeroFlag)")
+        return s
+    }
+
     // Main app's own bundle id (project.pbxproj PRODUCT_BUNDLE_IDENTIFIER for the
     // HealthDashboard target). The widget extension, watch app, and watch widget all
     // have distinct, differently-suffixed ids and fall through to the no-op branch.

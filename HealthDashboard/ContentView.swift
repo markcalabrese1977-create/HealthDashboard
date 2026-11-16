@@ -1068,6 +1068,9 @@ struct ContentView: View {
             // for no functional reason since reloadTimelines doesn't change the stored data.
             SharedStore.debugDump(tag: "AFTER Backfill 7 Days")
             SharedStore.dumpVerdictLog()
+            #if DEBUG
+            SharedStore.dumpSubThresholdYellows()
+            #endif
 
         } catch {
             await MainActor.run {
