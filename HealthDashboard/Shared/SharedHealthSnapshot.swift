@@ -127,6 +127,10 @@ struct ManualReadinessInputs: Codable, Equatable {
     /// True only when clearly sick/systemic (feverish, aches, chest crud, heavy fatigue).
     var isSick: Bool
 
+    /// yyyy-MM-dd the values were entered; they expire at the next calendar day (enforced in
+    /// SharedStore.loadManual). nil = written before this field existed, which counts as expired.
+    var enteredDateISO: String? = nil
+
     static let `default` = ManualReadinessInputs(
         painLevel: 0,
         isSick: false
@@ -888,7 +892,10 @@ enum SharedStore {
 
     // MARK: Manual
 
-    static func loadManual() -> ManualReadinessInputs {
+    /// Pain/sick are valid only on the calendar day they were entered. A value entered on an earlier
+    /// day, or an undated legacy value, is expired: the key is removed and `.default` returned. That
+    /// removal is the only write this function ever makes.
+    static func loadManual(now: Date = Date()) -> ManualReadinessInputs {
         guard
             let d = defaults(),
             let data = d.data(forKey: manualKey),
@@ -898,12 +905,20 @@ enum SharedStore {
             return .default
         }
 
+        guard decoded.enteredDateISO == verdictDayFormatter.string(from: now) else {
+            log("📥 load(manual) -> expired (entered \(decoded.enteredDateISO ?? "undated")), removed")
+            d.removeObject(forKey: manualKey)
+            return .default
+        }
+
         log("📥 load(manual) -> pain=\(decoded.painLevel) sick=\(decoded.isSick)")
         return decoded
     }
 
-    static func saveManual(_ manual: ManualReadinessInputs) {
+    static func saveManual(_ manual: ManualReadinessInputs, now: Date = Date()) {
         guard let d = defaults() else { return }
+        var manual = manual
+        manual.enteredDateISO = verdictDayFormatter.string(from: now)
 
         if let data = try? JSONEncoder().encode(manual) {
             d.set(data, forKey: manualKey)

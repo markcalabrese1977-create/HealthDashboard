@@ -73,6 +73,15 @@ final class NightContextStoreTests: XCTestCase {
     }
 
     func testDoesNotTouchManualOrVerdictLog() {
+        // Seed a manual value dated today so loadManual() has nothing to expire (it removes an
+        // expired key), and restore whatever the store held afterwards.
+        let savedManual = suite?.data(forKey: SharedStore.manualKey)
+        defer {
+            if let savedManual { suite?.set(savedManual, forKey: SharedStore.manualKey) }
+            else { suite?.removeObject(forKey: SharedStore.manualKey) }
+        }
+        SharedStore.saveManual(ManualReadinessInputs(painLevel: 3, isSick: false))
+
         let manualBefore = SharedStore.loadManual()
         let logBefore = SharedStore.loadVerdictLog()
         let manualRawBefore = suite?.data(forKey: SharedStore.manualKey)
