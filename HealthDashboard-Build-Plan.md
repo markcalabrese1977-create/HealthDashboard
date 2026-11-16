@@ -173,7 +173,7 @@ Originally: on n ≥ 15 closure, swap the composite driver, cut the store over, 
 
 - **Store cutover** — consumers read the trusted store instead of live extractors.
 - **Status-into-verdict wiring** — Phase 2 status tuples feed the verdict.
-- **Dead HRV buffer fix** — the HRV buffer is unreachable behind a −1 floor clamp that precedes the buffer guard; fires every run. Confirmed via debug dumps.
+- **Dead HRV buffer fix** — the HRV buffer is unreachable behind a −1 floor clamp that precedes the buffer guard; fires every run. Confirmed via debug dumps. **RESOLVED (2026-08-27, `cd6e76d`)** — dead buffer removed, −1 clamp kept as the floor (no behavior change); verified again in the 11/16 recon (no buffer variable remains).
 
 ### ⛔ Composite driver swap: RETIRED (2026-08-26 — see resolution note below)
 
@@ -316,7 +316,7 @@ Consequences:
 
 ### 🌡️ Readiness signal weighting (from 11/16 recon)
 
-Status: GATED (Phase 8) — every item below edits `ReadinessEngine.evaluate()`; spec only, nothing implemented. Upstream/orthogonal pieces already landed on `readiness-display-context` (sleep tile/row target parity, night-context tag store + warm-room toggle, dated pain/sick expiry, `persistManual` log-write suppression, query D diagnostic `SharedStore.dumpSubThresholdYellows()`).
+Status: OPEN — Phase 8, gated by per-item exit gates. Every item below edits `ReadinessEngine.evaluate()`; spec only, nothing implemented. Upstream/orthogonal pieces already landed on `readiness-display-context` (sleep tile/row target parity, night-context tag store + warm-room toggle, dated pain/sick expiry, `persistManual` log-write suppression, query D diagnostic `SharedStore.dumpSubThresholdYellows()`).
 
 Background:
 - The 11/16 yellow came from wrist temp scoring −3 (|Δ| > 0.7, `ReadinessEngine.swift:214`, no corroboration) plus HRV −1 and sleep −1 fillers, via the score path (`recoveryScore ≤ −4`, line 407) — not the cluster path (`clusterCount` was ~1).
@@ -326,6 +326,7 @@ Background:
 Order is priority order. Each item ships alone, tests red first, with `ReadinessParityGolden.swift` regenerated per item (see Cross-cutting).
 
 **C3 — Temp corroboration (FIRST)**
+- Prerequisite: per-signal scores on `DailyVerdictRecord` (see Cross-cutting) land first, so C3's effect is measured, not inferred.
 - Named constants: `tempWatchMagnitudeC = 0.7`, `tempSustainDays = 3`.
 - Temp score and `tempUp03` count toward `recoveryScore` / `clusterCount` only if (|Δ| ≥ `tempWatchMagnitudeC` AND streak ≥ `tempSustainDays`) OR `rhrUp3` OR `rrUp10`. Otherwise emit a "Wrist Temp ↑ (watch)" flag only, score 0.
 - Streak is computed from `history`, not the verdict log (the log is capped at 30 days and is written as a side effect of `evaluate()`).
@@ -356,7 +357,7 @@ Order is priority order. Each item ships alone, tests red first, with `Readiness
 - Exit gate: HRV series identity documented; SWC threshold reproduces the intended 11/16 outcome (−6.8% on a ~23.6 ms baseline does not score unless it clears 0.5 × SD).
 
 **Cross-cutting**
-- Add per-signal scores to `DailyVerdictRecord` (additive, decode-safe like `rawRecoveryTruth`) so before/after can be measured instead of inferred. Written inside `evaluate()`, so gated with the rest; do this before C3 so C3's effect is measurable.
+- **Prerequisite for C3:** add per-signal scores to `DailyVerdictRecord` (additive, decode-safe like `rawRecoveryTruth`) so before/after can be measured instead of inferred. Written inside `evaluate()`, so it ships under the same per-item exit gates, and C3 does not start until it has landed.
 - Parity goldens (`ReadinessParityGolden.swift`) will need regeneration — regenerate per item, not once at the end.
 - History note: the RHR cluster threshold moved 4.0 → 3.0 bpm in `206637e` (2026-07-04); the log key stays `rhrUp4`. Pre-2026-07-04 `rhrUp4` flags used the 4.0 threshold — account for it when reading the log.
 - Data collection now: toggle the warm-room tag nightly while the heat is on (Reality check → "Warm room / heat on (last night)").
@@ -371,7 +372,7 @@ Order is priority order. Each item ships alone, tests red first, with `Readiness
 - **Dashboard routing bug** — presentation-only fix; independent of the scoring questions.
 - **VO2max** — real-capture HR check → push + PR; edit-window display-anchor fix.
 - **mechanicalLoad** — Step 4a frequency probe; double-write idempotent fix; durability/rehydration debt.
-- **Dead HRV buffer fix** — Phase 8.
+- **Dead HRV buffer fix** — Phase 8. **RESOLVED (2026-08-27, `cd6e76d`)** — buffer removed, −1 clamp kept; no behavior change.
 - **Post-restore data degradation (cross-cutting):** restored history is lossy/laggy for derived scalars (mechanical-load history wiped; sleep window-bounds/axis availability degraded for days after a restore). Any validation/scoring run on a post-restore window is suspect until the window clears. Validator now flags degraded runs; no general rehydration guarantee exists. Same disease as the mechanicalLoad durability gap.
 - **Phase 1 architecture sign-off** — canonical record shape + 3 identity keys; first brick of the trusted-store arc.
 - **`readiness-gate-hold-messaging` PR** — `git stash -u` + clean re-run, then open.
