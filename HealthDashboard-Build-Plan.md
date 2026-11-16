@@ -30,7 +30,7 @@ The plan was sequenced around one fact: the sleep composite was on hold pending 
 - Recovery-stripped composite(D) vs recovery(D+1): r = −0.02
 - Per-axis: Architecture +0.21 · Duration −0.07 · Efficiency −0.35 (WRONG SIGN) · Fragmentation −0.12 · Consistency +0.20
 - Significance floor at n = 22 (df = 20): |r| > ~0.42 for p < .05 two-tailed. Nothing clears it.
-- **Verdict:** the sleep composite, as built, does not predict next-day readiness in this data. Phase 8 composite driver swap is on hold pending a rework decision (see Phase 8). The validation gate did exactly what it was built to do — it stopped a non-predictive driver from being wired in.
+- **Verdict:** the sleep composite, as built, does not predict next-day readiness in this data. Phase 8 composite driver swap is on hold pending a rework decision (see Phase 8) *[Superseded by the 8/26 RESOLVED note: swap RETIRED, no rework pending]*. The validation gate did exactly what it was built to do — it stopped a non-predictive driver from being wired in.
 
 ### Readiness confirmation-hold fix (driver-aware gate) — code-complete, pending commit
 
@@ -61,7 +61,7 @@ The plan was sequenced around one fact: the sleep composite was on hold pending 
 
 **Ran DURING the hold** (safe — no change to the readiness verdict): Phase 0 (recon) · Phase 1 (ingestion + trusted store, shadow-read only) · Phase 2 (status semantics — compute, don't wire) · Phase 3 (longevity evaluators + scheduler) · Phase 4 (load & recovery engine — additive) · Phase 5 (clinical / FHIR) · Phase 6 (projection / sync contract) · Phase 7 (VO2max estimator)
 
-**Waits for validation to CLOSE** (the gated cutover — verdict may now change): Phase 8 (validation closure, composite driver swap, store cutover, status-into-verdict wiring, dead HRV buffer fix).
+**Waits for validation to CLOSE** (the gated cutover — verdict may now change): Phase 8 (validation closure, composite driver swap, store cutover, status-into-verdict wiring, dead HRV buffer fix). *[Validation has closed; composite driver swap RETIRED and dead HRV buffer fix RESOLVED (`cd6e76d`) — see the 8/26 RESOLVED note.]*
 
 The Phase 1 quality guard is not merely parallel-safe — it actively cleans the validation set by quarantining corrupt nights (deep+REM == 0, or unspecified > 20%) before they enter the matured pairs.
 
@@ -165,11 +165,11 @@ Exit gate before push/PR: one real strap-paired capture with stored HR verified 
 
 ---
 
-## Phase 8 — Validation closure & cutover (GATED — now in rework-decision state)
+## Phase 8 — Validation closure & cutover (OPEN — hold discharged 8/26; per-item exit gates)
 
-Originally: on n ≥ 15 closure, swap the composite driver, cut the store over, wire status into the verdict, and fix the dead HRV buffer. The n ≥ 15 gate has closed — but with a null validation result, so the composite driver swap is contraindicated. The remaining Phase 8 items (store cutover, status-into-verdict wiring, dead HRV buffer fix) are unblocked in principle but should not assume a working composite.
+Originally: on n ≥ 15 closure, swap the composite driver, cut the store over, wire status into the verdict, and fix the dead HRV buffer. The n ≥ 15 gate has closed — but with a null validation result, so the composite driver swap is contraindicated. The remaining Phase 8 items (store cutover, status-into-verdict wiring, dead HRV buffer fix — **RESOLVED, `cd6e76d`**) are unblocked in principle but should not assume a working composite. *[Superseded by the 8/26 RESOLVED note: the swap is RETIRED and the hold is discharged; the items below are open under per-item exit gates.]*
 
-**Remaining gated items:**
+**Remaining gated items:** *[Superseded by the 8/26 RESOLVED note — open under per-item exit gates, not a hold.]*
 
 - **Store cutover** — consumers read the trusted store instead of live extractors.
 - **Status-into-verdict wiring** — Phase 2 status tuples feed the verdict.
@@ -211,7 +211,8 @@ Interpretation:
 Decision required (separate session): rework the composite (drop Efficiency
 as scored, rebuild around Architecture/Consistency, re-validate) vs. park it.
 Do NOT let any downstream Phase 8 step assume a working composite until this
-is resolved.
+is resolved. [Superseded by the 8/26 RESOLVED note: resolved as "park as display" —
+the composite never enters the verdict, so no step may assume one.]
 
 ### 🔬 Composite rework agenda — efficiency operationalization + driver status (2026-08-08)
 
@@ -306,7 +307,7 @@ Architecture re-test, if ever run.
 
 Consequences:
 - Phase 8 driver swap: RETIRED. Phase 8 now = store cutover + status-into-verdict
-  wiring + dead HRV buffer fix. None depend on the composite.
+  wiring + dead HRV buffer fix (**RESOLVED, `cd6e76d`**). None depend on the composite.
 - The "🔬 Composite rework agenda" (Q1 efficiency operationalization, Q2 efficiency-as-
   driver) is CLOSED: no composite axis drives the verdict, so the operationalization
   and driver questions are moot. The sleep-efficiency detractor remains a ReadinessEngine
@@ -344,6 +345,7 @@ Order is priority order. Each item ships alone, tests red first, with `Readiness
 - Exit gate: no yellow reachable from signals that each sit below their own flag threshold; parity goldens regenerated and reviewed line by line.
 
 **C1 — Fixed sleep need**
+- Permanent design: the composite driver swap is RETIRED (8/26), so the fixed sleep target is not interim.
 - `ReadinessTuning.sleepNeedHours = 7.5` replaces `max(7.0, sleepBase ?? 7.0)` at line 102.
 - Decision required: does the +1 recovery-night promotion (line 180) use `sleepBase` or the constant? One sleep reference per signal.
 - Re-baseline `sleepShort1` (line 334) and the −1/−2/−3 score bands (lines 174-177) against the new target.
