@@ -18,8 +18,10 @@ struct ContentView: View {
     @State private var bodyMeasurements: [BodyMeasurementEntry] = SharedStore.loadBodyMeasurements()
     @State private var showMeasurementsForm = false
 
-    @State private var isRefreshing = false
-        @State private var errorText: String?
+    // Owns isRefreshing / errorText / the status note, and the refresh watchdog (see RefreshController).
+    @State private var refresh = RefreshController(
+        abandonInFlight: { HealthKitManager.shared.abandonInFlightLast28DaysFetch() }
+    )
     @State private var selectedMetric: HealthMetric? = nil
         @State private var selectedBodyMetric: BodyMetric? = nil
 
@@ -344,6 +346,12 @@ struct ContentView: View {
                                     Text("As of \(snapshot.updatedAt.formatted(date: .omitted, time: .shortened))")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
+
+                                    if let note = refresh.refreshNote {
+                                        Text(note)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
                                 }
                             }
 
@@ -649,11 +657,11 @@ struct ContentView: View {
                     DashboardCard(
                         title: "Load Signals",
                         trailing: AnyView(
-                            Button { Task { await backfill7Days() } } label: {
+                            Button { Task { await backfill7Days(userInitiated: true) } } label: {
                                 Label("Refresh", systemImage: "arrow.clockwise")
                                     .font(.subheadline.weight(.semibold))
                             }
-                                .disabled(isRefreshing)
+                                .disabled(refresh.isRefreshing)
                                                         ),
                                                         collapsible: true
                                                     ) {
@@ -709,7 +717,7 @@ struct ContentView: View {
                             )
                         }
 
-                        if let errorText {
+                        if let errorText = refresh.errorText {
                             Text(errorText)
                                 .font(.caption)
                                 .foregroundStyle(.red)
@@ -830,11 +838,11 @@ struct ContentView: View {
                     DashboardCard(
                         title: "Trends",
                         trailing: AnyView(
-                            Button { Task { await backfill7Days() } } label: {
+                            Button { Task { await backfill7Days(userInitiated: true) } } label: {
                                 Label("Refresh", systemImage: "chart.line.uptrend.xyaxis")
                                     .font(.subheadline.weight(.semibold))
                             }
-                                .disabled(isRefreshing)
+                                .disabled(refresh.isRefreshing)
                                                         ),
                                                         collapsible: true
                                                     ) {
@@ -947,31 +955,42 @@ struct ContentView: View {
         WidgetCenter.shared.reloadTimelines(ofKind: "HealthDashboardWidget")
     }
 
-    private func backfill7Days() async {
-        // Atomic check-and-set on MainActor closes the race window between
-        // refreshIfStale's staleness check and this function starting — without
-        // this, .task (initial load) and .onChange(scenePhase) firing close together
-        // could both pass the staleness check and launch concurrent HK fetches.
-        let started = await MainActor.run { () -> Bool in
-            guard !isRefreshing else { return false }
-            isRefreshing = true
-            errorText = nil
-            return true
-        }
-        guard started else { return }
-        defer { Task { @MainActor in isRefreshing = false } }
+    private func backfill7Days(userInitiated: Bool = false) async {
+        // RefreshController owns the isRefreshing guard (it also covers the race between
+        // refreshIfStale's staleness check and this function starting), the 45 s watchdog, and the
+        // orphan guard: a fetch that finishes after a timeout never reaches applyFetched below.
+        let outcome = await refresh.run(
+            userInitiated: userInitiated,
+            fetch: {
+                try await HealthKitManager.shared.requestAuthorization()
+                let points = try await HealthKitManager.shared.fetchLast28Days()
 
-        do {
-            try await HealthKitManager.shared.requestAuthorization()
-            let points = try await HealthKitManager.shared.fetchLast28Days()
+                #if DEBUG
+                if let lastDay = points.last?.dayISO {
+                    try? await HealthKitManager.shared.debugDumpSleepSamplesForDay(lastDay)
+                }
+                #endif
+                return points
+            },
+            apply: { points in applyFetched(points) }
+        )
+        guard outcome == .applied else { return }
 
-            #if DEBUG
-            if let lastDay = points.last?.dayISO {
-                try? await HealthKitManager.shared.debugDumpSleepSamplesForDay(lastDay)
-            }
-            #endif
+        WidgetCenter.shared.reloadTimelines(ofKind: "HealthDashboardWidget")
+        // Was previously dumped twice (once here, once before reloadTimelines) —
+        // each debugDump() call re-reads snapshot/history/manual from UserDefaults
+        // purely for logging, doubling the "load() called N times per launch" count
+        // for no functional reason since reloadTimelines doesn't change the stored data.
+        SharedStore.debugDump(tag: "AFTER Backfill 7 Days")
+        SharedStore.dumpVerdictLog()
+        #if DEBUG
+        SharedStore.dumpSubThresholdYellows()
+        #endif
+    }
 
-            await MainActor.run {
+    /// Writes one completed fetch: history, snapshot, readiness, widget projection, Watch payload.
+    /// Called only by RefreshController, and only for the run that is still current.
+    private func applyFetched(_ points: [DailyHealthPoint]) {
                 _ = SharedStore.checkAppGroupAccess(tag: "backfill7Days() pre-save")
 
                 SharedStore.saveHistory(points)
@@ -1059,29 +1078,11 @@ struct ContentView: View {
                     updatedAt: Date()
                 )
                 WatchSessionManager.shared.send(payload)
-            }
-
-            WidgetCenter.shared.reloadTimelines(ofKind: "HealthDashboardWidget")
-            // Was previously dumped twice (once here, once before reloadTimelines) —
-            // each debugDump() call re-reads snapshot/history/manual from UserDefaults
-            // purely for logging, doubling the "load() called N times per launch" count
-            // for no functional reason since reloadTimelines doesn't change the stored data.
-            SharedStore.debugDump(tag: "AFTER Backfill 7 Days")
-            SharedStore.dumpVerdictLog()
-            #if DEBUG
-            SharedStore.dumpSubThresholdYellows()
-            #endif
-
-        } catch {
-            await MainActor.run {
-                errorText = error.localizedDescription
-            }
-        }
     }
 
     // MARK: - Auto refresh helpers
     private func refreshIfStale(maxAgeSeconds: TimeInterval) async {
-        guard !isRefreshing else { return }
+        guard !refresh.isRefreshing else { return }
 
         let previousUpdatedAt = snapshot.updatedAt
 

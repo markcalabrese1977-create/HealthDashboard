@@ -35,7 +35,32 @@ final class HealthKitManager {
     // the comment there), which serializes the check-and-set below, so all
     // callers — regardless of which queue/Task they call from — either start the
     // one fetch or await the in-flight one's result.
-    private var inFlightLast28DaysFetch: Task<[DailyHealthPoint], Error>?
+    //
+    // Watchdog support: every fetch carries a generation. A refresh that times out calls
+    // abandonInFlightLast28DaysFetch(), which drops the in-flight entry (so the next caller starts a
+    // new fetch instead of rejoining a hung one) and invalidates every generation issued so far, so
+    // the abandoned fetch cannot hand its late result to any caller (observer path included).
+    private struct InFlightFetch {
+        let generation: Int
+        let task: Task<[DailyHealthPoint], Error>
+    }
+    private var inFlightLast28DaysFetch: InFlightFetch?
+    private var nextFetchGeneration = 0
+    private var minValidFetchGeneration = 0
+
+    /// Test seam: replaces the real 28-day fetch. nil in production.
+    var last28DaysFetchOperation: (@Sendable () async throws -> [DailyHealthPoint])?
+
+    enum FetchError: LocalizedError {
+        case abandoned
+        var errorDescription: String? { "The HealthKit fetch was abandoned after a timeout." }
+    }
+
+    func abandonInFlightLast28DaysFetch() {
+        inFlightLast28DaysFetch?.task.cancel()
+        inFlightLast28DaysFetch = nil
+        minValidFetchGeneration = nextFetchGeneration
+    }
 
         #if DEBUG
         private func debugDumpRestingHRSamples(dayStart: Date, dayEnd: Date) {
@@ -548,15 +573,29 @@ final class HealthKitManager {
             #if DEBUG
             print("⏱ fetchLast28Days: joining in-flight fetch instead of starting a new one")
             #endif
-            return try await existing.value
+            let value = try await existing.task.value
+            guard existing.generation >= minValidFetchGeneration else { throw FetchError.abandoned }
+            return value
         }
 
-        let task = Task { try await self.fetchLastNDays(28) }
-        inFlightLast28DaysFetch = task
+        let generation = nextFetchGeneration
+        nextFetchGeneration += 1
+        let operation = last28DaysFetchOperation
+        let task = Task { () throws -> [DailyHealthPoint] in
+            if let operation { return try await operation() }
+            return try await self.fetchLastNDays(28)
+        }
+        inFlightLast28DaysFetch = InFlightFetch(generation: generation, task: task)
 
-        defer { inFlightLast28DaysFetch = nil }
+        // Only the creator clears the entry, and only its own: after an abandon a newer fetch may
+        // already occupy the slot.
+        defer {
+            if inFlightLast28DaysFetch?.generation == generation { inFlightLast28DaysFetch = nil }
+        }
 
-        return try await task.value
+        let value = try await task.value
+        guard generation >= minValidFetchGeneration else { throw FetchError.abandoned }
+        return value
     }
 
     // MARK: - Daily Average (quantity, calendar-day)
