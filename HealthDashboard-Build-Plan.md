@@ -90,6 +90,7 @@ Order is priority order. Each item ships alone, tests red first, with `Readiness
 - Keep the rolling 28-day median baseline (environment and season shift it).
 - Decision required: does the watch flag still block `canPushKeyLift` (line 515)? Default: no.
 - Later phase: `NightContextTag.warmRoom` downgrades temp to watch-only.
+- Open question: "Day 3 of temp on 11/17 with heat on all three nights — consider bringing the warmRoom downgrade into R1 rather than a later phase."
 - Also fix: `wristTempDeltaC` holds absolute °C (`HealthKitManager.swift:472`). Rename it or correct the comment at `SharedHealthSnapshot.swift:91` (and the lines above it, which describe it as a deviation near 0).
 - Exit gate: 11/16-style inputs (temp +1.3, RHR/RR near baseline) produce no temp score and a watch flag; temp with RHR or RR corroboration, or sustained ≥ 3 days at ≥ 0.7, still scores.
 
@@ -183,8 +184,13 @@ Display it as Apple's number **if** HealthKit exposes it. **Status: not verified
 
 ### Pending merges
 
-- `readiness-display-context` → `main`. Remaining device checks: (a) pain/sick set on day N reads default on day N+1; (b) a manual edit before the morning HealthKit fetch does not overwrite today's verdict-log slot with yesterday's verdict. Tile 'vs target' and warm-room toggle persistence: verified 11/16.
+- **MERGED 2026-11-17** (no-ff, pushed): `readiness-display-context` → `main` as `aa113ee`; `fix/refresh-watchdog` → `main` as `bc27e47`. Suite on `main` after each merge: 272 and 286 tests, 0 failures.
+- Device checks: (a) pain/sick set on day N reads default on day N+1 — verified 2026-11-17. Refresh (watchdog, status note) — verified 2026-11-17. Warm-room toggle persistence/reset — verified 2026-11-17. (b) a manual edit before the morning HealthKit fetch does not overwrite today's verdict-log slot with yesterday's verdict — accepted on unit test `ManualEditPersistenceTests` (not device-verified). Tile 'vs target': verified 11/16.
 - EP `feat/in-app-guide` → `main`, after the known-failures check (9 failing tests, all listed in `Tests/known_failures.txt`; `ReorderTests.test_J4…` is the flaky one).
+
+### Follow-ups
+
+- Refresh note shows the last user-tap time and can disagree with 'As of' after auto/foreground refreshes; update it on any successful refresh or auto-hide after ~60 s.
 
 ### Decisions
 
@@ -195,7 +201,8 @@ Display it as Apple's number **if** HealthKit exposes it. **Status: not verified
 ### Branch cleanup (from the 2026-11-16 audit)
 
 - **Safe to delete (merged):** HD `origin/readiness-gate-hold-messaging`; EP `fix/planmemory-inprogress` (local and remote) and `origin/feat/coach-first-mvp`.
-- **Needs merge:** HD `readiness-display-context`, `feature/vo2max-capture` / `test/vo2max-on-main`; EP `feat/in-app-guide` (contains 59 other local branches — delete those only after it lands in `main`).
+- **Merged 2026-11-17 (safe to delete after your OK):** HD `readiness-display-context`, `fix/refresh-watchdog` (local and remote).
+- **Needs merge:** HD `feature/vo2max-capture` / `test/vo2max-on-main`; EP `feat/in-app-guide` (contains 59 other local branches — delete those only after it lands in `main`).
 - **Needs decision:** HD `diagnostic/verdict-write-trace` (+ its `-rebased` copy), both HD stashes, the EP stash; EP `chore/warning-cleanup-OLD-armed` and `fix/next-meso-copy` (not contained in the tip).
 
 ---
