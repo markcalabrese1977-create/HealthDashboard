@@ -102,6 +102,7 @@ Order is priority order. Each item ships alone, tests red first, with `Readiness
 - Exit gate: no yellow reachable from signals that each sit below their own flag threshold; parity goldens regenerated and reviewed line by line.
 
 **R3 — Fixed sleep need**
+- **Status: DONE-branch** (`r3-fixed-sleep-need`, 2026-11-17, not merged/pushed): red tests `50ffbdc`, constants + engine `ae06b7a`, goldens + guard `0422685`. Decision: +1 promotion uses the constant (`sleepNeedHours + 1.0`), not `sleepBase`. Full suite 293/293 on iPhone 17 / iOS 26.4. Device check still pending.
 - Permanent design: the composite driver swap is RETIRED (8/26), so the fixed sleep target is not interim.
 - `ReadinessTuning.sleepNeedHours = 7.5` replaces `max(7.0, sleepBase ?? 7.0)` at line 102.
 - Decision required: does the +1 recovery-night promotion (line 180) use `sleepBase` or the constant? One sleep reference per signal.
