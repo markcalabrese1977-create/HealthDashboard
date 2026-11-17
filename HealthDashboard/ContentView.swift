@@ -657,7 +657,7 @@ struct ContentView: View {
                     DashboardCard(
                         title: "Load Signals",
                         trailing: AnyView(
-                            Button { Task { await backfill7Days(userInitiated: true) } } label: {
+                            Button { Task { await backfill7Days(source: .userTap) } } label: {
                                 Label("Refresh", systemImage: "arrow.clockwise")
                                     .font(.subheadline.weight(.semibold))
                             }
@@ -838,7 +838,7 @@ struct ContentView: View {
                     DashboardCard(
                         title: "Trends",
                         trailing: AnyView(
-                            Button { Task { await backfill7Days(userInitiated: true) } } label: {
+                            Button { Task { await backfill7Days(source: .userTap) } } label: {
                                 Label("Refresh", systemImage: "chart.line.uptrend.xyaxis")
                                     .font(.subheadline.weight(.semibold))
                             }
@@ -901,10 +901,10 @@ struct ContentView: View {
             .onChange(of: scenePhase) { _, newPhase in
                 guard newPhase == .active else { return }
                 warmRoom = SharedStore.nightContextTags().contains(.warmRoom)
-                Task { await refreshIfStale(maxAgeSeconds: staleThresholdSeconds) }
+                Task { await refreshIfStale(maxAgeSeconds: staleThresholdSeconds, source: .foreground) }
             }
             .task {
-                await refreshIfStale(maxAgeSeconds: staleThresholdSeconds)
+                await refreshIfStale(maxAgeSeconds: staleThresholdSeconds, source: .foreground)
             }
             .task {
                 await visibleAutoRefreshLoop()
@@ -955,15 +955,17 @@ struct ContentView: View {
         WidgetCenter.shared.reloadTimelines(ofKind: "HealthDashboardWidget")
     }
 
-    private func backfill7Days(userInitiated: Bool = false) async {
+    private func backfill7Days(source: RefreshSource) async {
         // RefreshController owns the isRefreshing guard (it also covers the race between
         // refreshIfStale's staleness check and this function starting), the 45 s watchdog, and the
         // orphan guard: a fetch that finishes after a timeout never reaches applyFetched below.
+        let probe = RefreshProbe()
         let outcome = await refresh.run(
-            userInitiated: userInitiated,
+            source: source,
+            probe: probe,
             fetch: {
                 try await HealthKitManager.shared.requestAuthorization()
-                let points = try await HealthKitManager.shared.fetchLast28Days()
+                let points = try await HealthKitManager.shared.fetchLast28Days(didJoinExisting: { probe.joined = $0 })
 
                 #if DEBUG
                 if let lastDay = points.last?.dayISO {
@@ -974,7 +976,12 @@ struct ContentView: View {
             },
             apply: { points in applyFetched(points) }
         )
-        guard outcome == .applied else { return }
+        guard outcome == .applied else {
+            #if DEBUG
+            RefreshDurationLog.dumpRefreshDurations()   // timeouts and failures are the interesting runs
+            #endif
+            return
+        }
 
         WidgetCenter.shared.reloadTimelines(ofKind: "HealthDashboardWidget")
         // Was previously dumped twice (once here, once before reloadTimelines) —
@@ -984,6 +991,7 @@ struct ContentView: View {
         SharedStore.debugDump(tag: "AFTER Backfill 7 Days")
         SharedStore.dumpVerdictLog()
         #if DEBUG
+        RefreshDurationLog.dumpRefreshDurations()
         SharedStore.dumpSubThresholdYellows()
         #endif
     }
@@ -1081,7 +1089,7 @@ struct ContentView: View {
     }
 
     // MARK: - Auto refresh helpers
-    private func refreshIfStale(maxAgeSeconds: TimeInterval) async {
+    private func refreshIfStale(maxAgeSeconds: TimeInterval, source: RefreshSource) async {
         guard !refresh.isRefreshing else { return }
 
         let previousUpdatedAt = snapshot.updatedAt
@@ -1105,13 +1113,13 @@ struct ContentView: View {
         let age = Date().timeIntervalSince(snapshot.updatedAt)
         guard age > maxAgeSeconds else { return }
 
-        await backfill7Days()
+        await backfill7Days(source: source)
     }
 
     private func visibleAutoRefreshLoop() async {
         while !Task.isCancelled {
             try? await Task.sleep(nanoseconds: UInt64(visibleRefreshIntervalSeconds * 1_000_000_000))
-            await refreshIfStale(maxAgeSeconds: staleThresholdSeconds)
+            await refreshIfStale(maxAgeSeconds: staleThresholdSeconds, source: .autoLoop)
         }
     }
 }

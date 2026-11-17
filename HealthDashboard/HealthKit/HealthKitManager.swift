@@ -558,7 +558,9 @@ final class HealthKitManager {
         try await fetchLastNDays(7)
     }
 
-    func fetchLast28Days() async throws -> [DailyHealthPoint] {
+    /// - Parameter didJoinExisting: called synchronously, before any await, with whether this call
+    ///   attached to an in-flight fetch (true) or started a new one (false).
+    func fetchLast28Days(didJoinExisting: ((Bool) -> Void)? = nil) async throws -> [DailyHealthPoint] {
         // This class has no explicit isolation, so under the project's
         // SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor setting it's implicitly
         // @MainActor — every caller (ContentView, and HealthDashboardApp's
@@ -570,6 +572,7 @@ final class HealthKitManager {
         // arrives while a fetch is already in flight see it and join it instead
         // of starting a second concurrent HealthKit query.
         if let existing = inFlightLast28DaysFetch {
+            didJoinExisting?(true)
             #if DEBUG
             print("⏱ fetchLast28Days: joining in-flight fetch instead of starting a new one")
             #endif
@@ -578,6 +581,7 @@ final class HealthKitManager {
             return value
         }
 
+        didJoinExisting?(false)
         let generation = nextFetchGeneration
         nextFetchGeneration += 1
         let operation = last28DaysFetchOperation

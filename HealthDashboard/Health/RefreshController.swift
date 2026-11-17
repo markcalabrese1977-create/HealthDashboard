@@ -12,12 +12,10 @@ enum RefreshTuning {
 }
 
 enum RefreshError: LocalizedError {
-    case timedOut(seconds: Int)
+    case timedOut
 
     var errorDescription: String? {
-        switch self {
-        case .timedOut(let s): return "Refresh timed out after \(s) s. Tap Refresh to try again."
-        }
+        "Refresh timed out after \(Int(RefreshTuning.refreshTimeoutSeconds)) s — tap to retry."
     }
 }
 
@@ -60,13 +58,14 @@ final class RefreshController {
     /// widget, Watch); it is called at most once, and only if this run is still current.
     @discardableResult
     func run(
-        userInitiated: Bool,
+        source: RefreshSource,
+        probe: RefreshProbe? = nil,
         now: Date = Date(),
         fetch: @escaping @MainActor @Sendable () async throws -> [DailyHealthPoint],
         apply: @MainActor ([DailyHealthPoint]) -> Void
     ) async -> Outcome {
         guard !isRefreshing else {
-            if userInitiated { refreshNote = "Already refreshing…" }
+            if source == .userTap { refreshNote = "Already refreshing…" }
             return .skippedAlreadyRefreshing
         }
         isRefreshing = true
@@ -76,6 +75,10 @@ final class RefreshController {
         let myGeneration = generation
 
         let timeout = timeoutSeconds
+        #if DEBUG
+        let clock = ContinuousClock()
+        let started = clock.now
+        #endif
         let result: Result<[DailyHealthPoint], Error> = await withCheckedContinuation { cont in
             let once = OSAllocatedUnfairLock(initialState: false)
             // True for exactly the first caller; the loser's result is discarded.
@@ -99,12 +102,29 @@ final class RefreshController {
                 try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
                 if claim() {
                     fetchTask.cancel()
-                    cont.resume(returning: .failure(RefreshError.timedOut(seconds: Int(timeout.rounded()))))
+                    cont.resume(returning: .failure(RefreshError.timedOut))
                 }
             }
         }
 
         // A newer run (or an explicit supersede) owns the state now.
+        #if DEBUG
+        // Wall-clock from authorization + fetch start to completion, before apply runs.
+        let outcomeName: String = {
+            switch result {
+            case .success: return "success"
+            case .failure(let e): if case RefreshError.timedOut = e { return "timeout" } else { return "error" }
+            }
+        }()
+        RefreshDurationLog.record(RefreshDurationEntry(
+            date: now,
+            ms: RefreshDurationLog.milliseconds(started.duration(to: clock.now)),
+            outcome: outcomeName,
+            source: source.rawValue,
+            joined: probe?.joined ?? false
+        ))
+        #endif
+
         // supersedeCurrentRun() already released isRefreshing, so a newer run's flag is not touched here.
         guard myGeneration == generation else { return .superseded }
 

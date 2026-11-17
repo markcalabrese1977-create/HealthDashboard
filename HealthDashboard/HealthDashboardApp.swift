@@ -67,9 +67,32 @@ struct HealthDashboardApp: App {
                 completionHandler()
 
                 Task.detached(priority: .utility) {
+                    #if DEBUG
+                    // Duration of the observer-path fetch, logged like the UI path (no timeout here).
+                    let clock = ContinuousClock()
+                    let started = clock.now
+                    var joined = false
+                    func logDuration(_ outcome: String) async {
+                        await RefreshDurationLog.record(RefreshDurationEntry(
+                            date: Date(),
+                            ms: RefreshDurationLog.milliseconds(started.duration(to: clock.now)),
+                            outcome: outcome, source: RefreshSource.observer.rawValue, joined: joined))
+                    }
+                    #endif
                     do {
                         try await HealthKitManager.shared.requestAuthorization()
-                        let points = try await HealthKitManager.shared.fetchLast28Days()
+                        let points: [DailyHealthPoint]
+                        #if DEBUG
+                        do {
+                            points = try await HealthKitManager.shared.fetchLast28Days(didJoinExisting: { joined = $0 })
+                            await logDuration("success")
+                        } catch {
+                            await logDuration("error")
+                            throw error
+                        }
+                        #else
+                        points = try await HealthKitManager.shared.fetchLast28Days()
+                        #endif
 
                         guard let last = points.last else { return }
 

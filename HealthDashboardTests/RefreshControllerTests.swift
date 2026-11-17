@@ -37,6 +37,20 @@ final class RefreshControllerTests: XCTestCase {
 
     private var applied: [Double] = []
     private var abandons = 0
+    private var savedDurations: Data?
+    private var suite: UserDefaults? { UserDefaults(suiteName: SharedStore.appGroupID) }
+
+    override func setUp() {
+        super.setUp()
+        savedDurations = suite?.data(forKey: RefreshDurationLog.key)
+        suite?.removeObject(forKey: RefreshDurationLog.key)
+    }
+
+    override func tearDown() {
+        if let savedDurations { suite?.set(savedDurations, forKey: RefreshDurationLog.key) }
+        else { suite?.removeObject(forKey: RefreshDurationLog.key) }
+        super.tearDown()
+    }
 
     private func makeController(timeout: TimeInterval = 0.15) -> RefreshController {
         RefreshController(timeoutSeconds: timeout, abandonInFlight: { [unowned self] in self.abandons += 1 })
@@ -48,16 +62,18 @@ final class RefreshControllerTests: XCTestCase {
         let c = makeController()
         let hung = Gate()
 
-        let first = await c.run(userInitiated: true, fetch: { try await hung.wait() }, apply: { self.apply($0) })
+        let first = await c.run(source: .userTap, fetch: { try await hung.wait() }, apply: { self.apply($0) })
 
         XCTAssertEqual(first, .timedOut)
         XCTAssertFalse(c.isRefreshing, "isRefreshing must be reset after a timeout")
-        XCTAssertNotNil(c.errorText, "a timeout must surface as errorText")
+        XCTAssertEqual(c.errorText, "Refresh timed out after 45 s — tap to retry.")
+        XCTAssertEqual(RefreshDurationLog.load().last?.outcome, "timeout", "the timeout path records outcome=timeout")
+        XCTAssertEqual(RefreshDurationLog.load().last?.source, "userTap")
         XCTAssertEqual(abandons, 1, "the in-flight HealthKit fetch must be abandoned on timeout")
         XCTAssertTrue(applied.isEmpty)
 
         let fresh = Counter()
-        let second = await c.run(userInitiated: true,
+        let second = await c.run(source: .userTap,
                                  fetch: { fresh.bump(); return payload(2) },
                                  apply: { self.apply($0) })
 
@@ -71,7 +87,7 @@ final class RefreshControllerTests: XCTestCase {
         let c = makeController()
         let hung = Gate()
 
-        _ = await c.run(userInitiated: true, fetch: { try await hung.wait() }, apply: { self.apply($0) })
+        _ = await c.run(source: .userTap, fetch: { try await hung.wait() }, apply: { self.apply($0) })
         await hung.release(payload(111))                 // the orphan completes late
         try? await Task.sleep(nanoseconds: 100_000_000)
 
@@ -86,11 +102,11 @@ final class RefreshControllerTests: XCTestCase {
         let current = Gate()
 
         let shortC = makeController(timeout: 0.1)
-        _ = await shortC.run(userInitiated: true, fetch: { try await orphan.wait() }, apply: { self.apply($0) })
+        _ = await shortC.run(source: .userTap, fetch: { try await orphan.wait() }, apply: { self.apply($0) })
 
         // A second refresh is in flight when the orphan completes.
         let run = Task { @MainActor in
-            await c.run(userInitiated: true, fetch: { try await current.wait() }, apply: { self.apply($0) })
+            await c.run(source: .userTap, fetch: { try await current.wait() }, apply: { self.apply($0) })
         }
         try? await Task.sleep(nanoseconds: 50_000_000)
         await orphan.release(payload(111))
@@ -108,7 +124,7 @@ final class RefreshControllerTests: XCTestCase {
         let c = makeController(timeout: 2)
         let g = Gate()
         let run = Task { @MainActor in
-            await c.run(userInitiated: true, fetch: { try await g.wait() }, apply: { self.apply($0) })
+            await c.run(source: .userTap, fetch: { try await g.wait() }, apply: { self.apply($0) })
         }
         try? await Task.sleep(nanoseconds: 50_000_000)
         c.supersedeCurrentRun()                          // e.g. a forced reset while the fetch is out
@@ -124,17 +140,17 @@ final class RefreshControllerTests: XCTestCase {
         let c = makeController(timeout: 2)
         let g = Gate()
         let run = Task { @MainActor in
-            await c.run(userInitiated: true, fetch: { try await g.wait() }, apply: { self.apply($0) })
+            await c.run(source: .userTap, fetch: { try await g.wait() }, apply: { self.apply($0) })
         }
         try? await Task.sleep(nanoseconds: 50_000_000)
         XCTAssertTrue(c.isRefreshing)
         XCTAssertNil(c.refreshNote, "the note is cleared when a tap starts a refresh")
 
-        let auto = await c.run(userInitiated: false, fetch: { payload(9) }, apply: { self.apply($0) })
+        let auto = await c.run(source: .autoLoop, fetch: { payload(9) }, apply: { self.apply($0) })
         XCTAssertEqual(auto, .skippedAlreadyRefreshing)
         XCTAssertNil(c.refreshNote, "the 5-minute loop must not flash a note")
 
-        let tap = await c.run(userInitiated: true, fetch: { payload(9) }, apply: { self.apply($0) })
+        let tap = await c.run(source: .userTap, fetch: { payload(9) }, apply: { self.apply($0) })
         XCTAssertEqual(tap, .skippedAlreadyRefreshing)
         XCTAssertEqual(c.refreshNote, "Already refreshing…")
 
@@ -149,13 +165,13 @@ final class RefreshControllerTests: XCTestCase {
         comps.hour = 19; comps.minute = 5
         let when = Calendar.current.date(from: comps)!
 
-        let out = await c.run(userInitiated: true, now: when, fetch: { payload(1) }, apply: { self.apply($0) })
+        let out = await c.run(source: .userTap, now: when, fetch: { payload(1) }, apply: { self.apply($0) })
         XCTAssertEqual(out, .applied)
         XCTAssertEqual(c.refreshNote, "Up to date · 7:05")
 
         let g = Gate()
         let next = Task { @MainActor in
-            await c.run(userInitiated: true, fetch: { try await g.wait() }, apply: { self.apply($0) })
+            await c.run(source: .userTap, fetch: { try await g.wait() }, apply: { self.apply($0) })
         }
         try? await Task.sleep(nanoseconds: 50_000_000)
         XCTAssertNil(c.refreshNote, "cleared on the next tap")
@@ -163,10 +179,25 @@ final class RefreshControllerTests: XCTestCase {
         _ = await next.value
     }
 
+    func testSuccessAndErrorAreRecordedWithSourceAndJoined() async {
+        struct Boom: Error {}
+        let c = makeController(timeout: 2)
+        let probe = RefreshProbe()
+        _ = await c.run(source: .foreground, probe: probe,
+                        fetch: { probe.joined = true; return payload(1) }, apply: { self.apply($0) })
+        _ = await c.run(source: .autoLoop, fetch: { throw Boom() }, apply: { self.apply($0) })
+
+        let log = RefreshDurationLog.load()
+        XCTAssertEqual(log.map(\.outcome), ["success", "error"])
+        XCTAssertEqual(log.map(\.source), ["foreground", "autoLoop"])
+        XCTAssertEqual(log.map(\.joined), [true, false])
+        XCTAssertEqual(RefreshDurationLog.line(log[0]), "⏱ refresh: \(log[0].ms) ms, outcome=success, source=foreground, joined=true")
+    }
+
     func testFailureSetsErrorTextAndResetsRefreshing() async {
         struct Boom: LocalizedError { var errorDescription: String? { "boom" } }
         let c = makeController(timeout: 2)
-        let out = await c.run(userInitiated: true, fetch: { throw Boom() }, apply: { self.apply($0) })
+        let out = await c.run(source: .userTap, fetch: { throw Boom() }, apply: { self.apply($0) })
         XCTAssertEqual(out, .failed)
         XCTAssertEqual(c.errorText, "boom")
         XCTAssertFalse(c.isRefreshing)
@@ -178,7 +209,7 @@ final class RefreshControllerTests: XCTestCase {
     func testRaceResumesExactlyOnceWhenFetchAndTimeoutCollide() async {
         for i in 0..<60 {
             let c = makeController(timeout: 0.01)
-            let out = await c.run(userInitiated: true,
+            let out = await c.run(source: .userTap,
                                   fetch: {
                                       try? await Task.sleep(nanoseconds: 10_000_000)
                                       return payload(Double(i))
@@ -223,5 +254,56 @@ final class HealthKitFetchAbandonTests: XCTestCase {
         await hung.release(payload(1))
         let late = await creator.result
         if case .success = late { XCTFail("the abandoned creator must not return its late data") }
+    }
+}
+
+// DEBUG ring buffer of refresh durations.
+@MainActor
+final class RefreshDurationLogTests: XCTestCase {
+
+    private var saved: Data?
+    private var suite: UserDefaults? { UserDefaults(suiteName: SharedStore.appGroupID) }
+
+    override func setUp() {
+        super.setUp()
+        saved = suite?.data(forKey: RefreshDurationLog.key)
+        suite?.removeObject(forKey: RefreshDurationLog.key)
+    }
+
+    override func tearDown() {
+        if let saved { suite?.set(saved, forKey: RefreshDurationLog.key) }
+        else { suite?.removeObject(forKey: RefreshDurationLog.key) }
+        super.tearDown()
+    }
+
+    private func entry(_ ms: Int, outcome: String = "success") -> RefreshDurationEntry {
+        RefreshDurationEntry(date: Date(timeIntervalSince1970: Double(ms)), ms: ms, outcome: outcome,
+                             source: "userTap", joined: false)
+    }
+
+    func testKeepsNewest50() {
+        for ms in 1...70 { RefreshDurationLog.record(entry(ms)) }
+        let log = RefreshDurationLog.load()
+        XCTAssertEqual(log.count, 50)
+        XCTAssertEqual(log.first?.ms, 21)
+        XCTAssertEqual(log.last?.ms, 70)
+    }
+
+    func testSummaryComputesP50P90MaxAndTimeouts() {
+        // 1...10 ms: nearest-rank p50 = 5, p90 = 9, max = 10; two entries are timeouts.
+        var entries = (1...8).map { entry($0) }
+        entries += [entry(9, outcome: "timeout"), entry(10, outcome: "timeout")]
+        let s = RefreshDurationLog.summary(of: entries)
+        XCTAssertEqual(s, RefreshDurationSummary(count: 10, p50: 5, p90: 9, max: 10, timeouts: 2))
+    }
+
+    func testSummaryOfEmptyLogIsZero() {
+        XCTAssertEqual(RefreshDurationLog.summary(of: []),
+                       RefreshDurationSummary(count: 0, p50: 0, p90: 0, max: 0, timeouts: 0))
+    }
+
+    func testSavedKeyIsRestoredAfterTest() {
+        // setUp stashed whatever was there and cleared it; the buffer starts empty.
+        XCTAssertTrue(RefreshDurationLog.load().isEmpty)
     }
 }
