@@ -25,11 +25,11 @@
 		D55406C62F219CCF00967963 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D55406C52F219CCF00967963 /* SwiftUI.framework */; };
 		D55406D52F219CD000967963 /* HealthDashboardWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = D55406C12F219CCF00967963 /* HealthDashboardWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		D8D2C3B927C6100A0ABE2264 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D55406C32F219CCF00967963 /* WidgetKit.framework */; };
+		E1A70C202B3D4E5F60718293 /* VerdictWriteTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1A70C1F2B3D4E5F60718293 /* VerdictWriteTrace.swift */; };
+		E1A70C212B3D4E5F60718293 /* VerdictWriteTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1A70C1F2B3D4E5F60718293 /* VerdictWriteTrace.swift */; };
 		E8F36459B6FF14EB4EA0C3F9 /* WatchSessionReceiver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0757212AF4C0E066400CA4D8 /* WatchSessionReceiver.swift */; };
 		FDFF1DF0ADB58A4BC6A7167B /* WatchPayload.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DF5AB2ED3EDBA06CBF97EE7 /* WatchPayload.swift */; };
 		FEED555ABADB26C749A6B676 /* HealthDashboardWatchWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = FA23DC9BC50FA33E9528D533 /* HealthDashboardWatchWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		E1A70C202B3D4E5F60718293 /* VerdictWriteTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1A70C1F2B3D4E5F60718293 /* VerdictWriteTrace.swift */; };
-		E1A70C212B3D4E5F60718293 /* VerdictWriteTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1A70C1F2B3D4E5F60718293 /* VerdictWriteTrace.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -118,10 +118,10 @@
 		D55406C32F219CCF00967963 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		D55406C52F219CCF00967963 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
 		D55406DC2F219D8A00967963 /* HealthDashboardWidgetExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = HealthDashboardWidgetExtension.entitlements; sourceTree = "<group>"; };
+		E1A70C1F2B3D4E5F60718293 /* VerdictWriteTrace.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VerdictWriteTrace.swift; sourceTree = "<group>"; };
 		EC9DC00B88BEFFDB9D2EBD39 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/WatchOS.platform/Developer/SDKs/WatchOS11.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		F0465058A7B3BF4E7A1981A8 /* HealthDashboardWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HealthDashboardWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		FA23DC9BC50FA33E9528D533 /* HealthDashboardWatchWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = HealthDashboardWatchWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
-		E1A70C1F2B3D4E5F60718293 /* VerdictWriteTrace.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VerdictWriteTrace.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
