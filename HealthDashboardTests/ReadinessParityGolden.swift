@@ -46,7 +46,7 @@ enum ReadinessParityGolden {
       ],
       "mechanicalLoad": 0,
       "rawTruth": "green",
-      "sleepDelta": -0.5,
+      "sleepDelta": 0,
       "totalScore": -1,
       "truth": "yellow"
     }
@@ -84,7 +84,7 @@ enum ReadinessParityGolden {
       "rawTruth": "green",
       "rhrDelta": 0,
       "rrDelta": 0,
-      "sleepDelta": 0,
+      "sleepDelta": 0.5,
       "tempDelta": 0,
       "totalScore": 0,
       "truth": "yellow"
@@ -123,7 +123,7 @@ enum ReadinessParityGolden {
       "rawTruth": "green",
       "rhrDelta": -45,
       "rrDelta": 0,
-      "sleepDelta": 0,
+      "sleepDelta": 0.5,
       "tempDelta": 0,
       "totalScore": 0,
       "truth": "yellow"
@@ -172,7 +172,7 @@ enum ReadinessParityGolden {
       "rawTruth": "green",
       "rhrDelta": 0,
       "rrDelta": 0,
-      "sleepDelta": 0,
+      "sleepDelta": 0.5,
       "tempDelta": 0,
       "totalScore": -3,
       "truth": "yellow"
@@ -221,7 +221,7 @@ enum ReadinessParityGolden {
       "rawTruth": "red",
       "rhrDelta": 0,
       "rrDelta": 0,
-      "sleepDelta": 0,
+      "sleepDelta": 0.5,
       "tempDelta": 0,
       "totalScore": -7,
       "truth": "red"
@@ -285,7 +285,7 @@ enum ReadinessParityGolden {
       "rawTruth": "red",
       "rhrDelta": 8,
       "rrDelta": 2.1999999999999993,
-      "sleepDelta": -2.5,
+      "sleepDelta": -2,
       "tempDelta": 0,
       "totalScore": -9,
       "truth": "red"
@@ -334,7 +334,7 @@ enum ReadinessParityGolden {
       "rawTruth": "yellow",
       "rhrDelta": 0,
       "rrDelta": 0,
-      "sleepDelta": 0,
+      "sleepDelta": 0.5,
       "tempDelta": 0,
       "totalScore": -4,
       "truth": "yellow"
@@ -391,7 +391,7 @@ enum ReadinessParityGolden {
       "rawTruth": "yellow",
       "rhrDelta": 5,
       "rrDelta": 0,
-      "sleepDelta": 0,
+      "sleepDelta": 0.5,
       "tempDelta": 0,
       "totalScore": -3,
       "truth": "yellow"
@@ -440,7 +440,7 @@ enum ReadinessParityGolden {
       "rawTruth": "green",
       "rhrDelta": 0,
       "rrDelta": 1.5,
-      "sleepDelta": 0,
+      "sleepDelta": 0.5,
       "tempDelta": 0,
       "totalScore": -1,
       "truth": "yellow"
@@ -479,7 +479,7 @@ enum ReadinessParityGolden {
       "rawTruth": "yellow",
       "rhrDelta": 0,
       "rrDelta": 0,
-      "sleepDelta": 0,
+      "sleepDelta": 0.5,
       "tempDelta": 0,
       "totalScore": -4,
       "truth": "yellow"
