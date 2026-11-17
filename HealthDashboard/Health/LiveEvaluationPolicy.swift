@@ -39,6 +39,17 @@ enum LiveEvaluationPolicy {
         return ReadinessEngine.evaluate(history: history, manual: manual)
     }
 
+    /// Re-evaluation after a Reality-check edit (pain/sick). Same persistence rule as the live
+    /// `onAppear` evaluation: before the day's fetch lands the history still ends yesterday, and an
+    /// unsuppressed evaluate() would write yesterday's verdict into today's log slot.
+    static func evaluateForManualEdit(
+        history: [DailyHealthPoint],
+        manual: ManualReadinessInputs,
+        now: Date = Date()
+    ) -> ReadinessResult {
+        evaluateForLive(history: history, manual: manual, now: now)
+    }
+
     /// True when the store holds a strictly newer snapshot than the one the view last rendered: a
     /// background delivery (hkObserver) saved newer data while the view was on screen. nil previous
     /// with a non-nil current also counts; a nil current never does.

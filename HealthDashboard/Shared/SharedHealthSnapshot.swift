@@ -110,6 +110,14 @@ struct DailyHealthPoint: Codable, Equatable, Identifiable {
     var leanMassLb: Double?             // pounds (proxy for “muscle mass”)
 }
 
+// MARK: - Night context tags (capture/log only; no scoring effect)
+
+/// Per-night context that may explain a signal (e.g. a heated room inflating wrist temp).
+/// Stored by SharedStore.setNightContextTag; nothing in the engine reads it.
+enum NightContextTag: String, Codable, CaseIterable {
+    case warmRoom
+}
+
 // MARK: - Manual readiness inputs (minimal)
 
 struct ManualReadinessInputs: Codable, Equatable {
@@ -118,6 +126,10 @@ struct ManualReadinessInputs: Codable, Equatable {
 
     /// True only when clearly sick/systemic (feverish, aches, chest crud, heavy fatigue).
     var isSick: Bool
+
+    /// yyyy-MM-dd the values were entered; they expire at the next calendar day (enforced in
+    /// SharedStore.loadManual). nil = written before this field existed, which counts as expired.
+    var enteredDateISO: String? = nil
 
     static let `default` = ManualReadinessInputs(
         painLevel: 0,
@@ -714,6 +726,10 @@ enum SharedStore {
     static let verdictLogKey = "health.readiness.verdictLog.v1"
     private static let verdictLogMaxDays = 30
 
+    // Per-night context tags (dateISO -> NightContextTag raw values). Capture/log only.
+    static let nightContextKey = "health.readiness.nightContext.v1"
+    private static let nightContextMaxDays = 60
+
     // Sleep-axis diagnostic log (side store for validation; not Watch-bound)
     static let sleepAxisLogKey = "health.sleep.axisLog.v1"
     private static let sleepAxisLogMaxDays = 30
@@ -876,7 +892,10 @@ enum SharedStore {
 
     // MARK: Manual
 
-    static func loadManual() -> ManualReadinessInputs {
+    /// Pain/sick are valid only on the calendar day they were entered. A value entered on an earlier
+    /// day, or an undated legacy value, is expired: the key is removed and `.default` returned. That
+    /// removal is the only write this function ever makes.
+    static func loadManual(now: Date = Date()) -> ManualReadinessInputs {
         guard
             let d = defaults(),
             let data = d.data(forKey: manualKey),
@@ -886,12 +905,20 @@ enum SharedStore {
             return .default
         }
 
+        guard decoded.enteredDateISO == verdictDayFormatter.string(from: now) else {
+            log("📥 load(manual) -> expired (entered \(decoded.enteredDateISO ?? "undated")), removed")
+            d.removeObject(forKey: manualKey)
+            return .default
+        }
+
         log("📥 load(manual) -> pain=\(decoded.painLevel) sick=\(decoded.isSick)")
         return decoded
     }
 
-    static func saveManual(_ manual: ManualReadinessInputs) {
+    static func saveManual(_ manual: ManualReadinessInputs, now: Date = Date()) {
         guard let d = defaults() else { return }
+        var manual = manual
+        manual.enteredDateISO = verdictDayFormatter.string(from: now)
 
         if let data = try? JSONEncoder().encode(manual) {
             d.set(data, forKey: manualKey)
@@ -1040,6 +1067,45 @@ enum SharedStore {
         log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     }
 
+    /// Counts from `dumpSubThresholdYellows`.
+    struct SubThresholdYellowSummary: Equatable {
+        var yellows = 0           // rawTruth == .yellow
+        var recoveryYellows = 0   // ... and the load-stripped verdict is yellow too
+        var loadOnly = 0          // rawTruth yellow, rawRecoveryTruth green (load-driven)
+        var scoreOnly = 0         // recovery yellow with < 2 cluster flags: reached via the score sum
+        var zeroFlag = 0          // scoreOnly with 0 flags: every signal under its own flag threshold
+        var scoreOnlyDates: [String] = []
+    }
+
+    /// Read-only diagnostic (Phase 8 recon, query D). The log stores flags, not per-signal scores, so
+    /// a recovery yellow with fewer than 2 cluster flags can only have come from the score path
+    /// (recoveryScore <= -4). Flag count mirrors the engine's clusterCount; `rhrUp4` is the legacy
+    /// log key for the engine's rhrUp3. Bounded by the 30-day log cap.
+    @discardableResult
+    static func dumpSubThresholdYellows() -> SubThresholdYellowSummary {
+        let entries = loadVerdictLog()
+        func flagCount(_ e: DailyVerdictRecord) -> Int {
+            [e.hrvConcern, e.rhrUp4, e.sleepShort1, e.tempUp03, e.rrUp10, e.sleepEffLow, e.sick]
+                .filter { $0 }.count
+        }
+
+        var s = SubThresholdYellowSummary()
+        for e in entries where e.rawTruth == .yellow {
+            s.yellows += 1
+            guard e.rawRecoveryTruth == .yellow else { s.loadOnly += 1; continue }
+            s.recoveryYellows += 1
+            let n = flagCount(e)
+            if n < 2 {
+                s.scoreOnly += 1
+                s.scoreOnlyDates.append(e.dateISO)
+                if n == 0 { s.zeroFlag += 1 }
+                log("  \(e.dateISO) flags=\(n) recovery=\(e.rawRecovery.map(String.init) ?? "nil") total=\(e.rawTotal)")
+            }
+        }
+        log("🟨 SUB-THRESHOLD YELLOWS — log=\(entries.count) yellows=\(s.yellows) recoveryYellows=\(s.recoveryYellows) loadOnly=\(s.loadOnly) scoreOnly(<2 flags)=\(s.scoreOnly) zeroFlag=\(s.zeroFlag)")
+        return s
+    }
+
     // Main app's own bundle id (project.pbxproj PRODUCT_BUNDLE_IDENTIFIER for the
     // HealthDashboard target). The widget extension, watch app, and watch widget all
     // have distinct, differently-suffixed ids and fall through to the no-op branch.
@@ -1119,6 +1185,36 @@ enum SharedStore {
 
         log("🔢 consecutiveDaysActive(asOf: \(dateISO)) -> \(count)")
         return count
+    }
+
+    // MARK: Night context tags
+
+    /// Raw map dateISO -> tag raw values. Raw strings are kept as stored so a tag unknown to this
+    /// build (e.g. written by a newer one) survives a read-modify-write.
+    static func loadNightContext() -> [String: [String]] {
+        guard let d = defaults(),
+              let data = d.data(forKey: nightContextKey),
+              let decoded = try? JSONDecoder().decode([String: [String]].self, from: data)
+        else { return [:] }
+        return decoded
+    }
+
+    static func nightContextTags(for date: Date = Date()) -> Set<NightContextTag> {
+        let raw = loadNightContext()[verdictDayFormatter.string(from: date)] ?? []
+        return Set(raw.compactMap(NightContextTag.init(rawValue:)))
+    }
+
+    static func setNightContextTag(_ tag: NightContextTag, on: Bool, for date: Date = Date()) {
+        guard let d = defaults() else { return }
+        var all = loadNightContext()
+        let key = verdictDayFormatter.string(from: date)
+        var tags = Set(all[key] ?? [])
+        if on { tags.insert(tag.rawValue) } else { tags.remove(tag.rawValue) }
+        all[key] = tags.isEmpty ? nil : tags.sorted()
+        if all.count > nightContextMaxDays {
+            for k in all.keys.sorted().dropLast(nightContextMaxDays) { all[k] = nil }
+        }
+        if let data = try? JSONEncoder().encode(all) { d.set(data, forKey: nightContextKey) }
     }
 
     // MARK: Sleep-axis diagnostic log

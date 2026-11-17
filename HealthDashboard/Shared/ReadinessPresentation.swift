@@ -363,6 +363,11 @@ extension ReadinessResult {
         case "Sleep Efficiency":
             return sleepQualitySubtitle()
 
+        case "Sleep":
+            // Same value and %.1f format as the Sleep tile (ReadinessResult.sleepDelta).
+            guard driver.isNegative, let d = sleepDelta else { return driver.reason }
+            return String(format: "%.1f h under target.", abs(d))
+
         default:
             // Non-sleep, non-HRV rows keep the engine's reading-derived reason.
             return driver.reason
