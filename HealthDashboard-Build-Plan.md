@@ -194,16 +194,16 @@ Display it as Apple's number **if** HealthKit exposes it. **Status: not verified
 
 ### Decisions
 
-- `diagnostic/verdict-write-trace`: merge or park. Local was rebased but origin still holds the pre-rebase history; the rebased copy is `origin/diagnostic/verdict-write-trace-rebased`. Some content looks duplicated on `main` (e.g. weekly no-write `df303d9` vs `86a8080`) — not verified.
+- `diagnostic/verdict-write-trace-rebased` — parked; persistManual stale-write fixed in 3701b53, trace no longer needed. Delete after 30 days if unused. (Parked 2026-11-17. The old `origin/diagnostic/verdict-write-trace` `bfeee36` was deleted after `git cherry` showed its patch already in `-rebased`; the local branch now tracks `-rebased`.)
 - The two HD stashes and the EP stash: patch-exported; apply or drop.
-- The main HD folder (`~/Projects/HealthDashboard`) is on `diagnostic/verdict-write-trace` with an uncommitted `project.pbxproj` reorder; it should sit on `main`.
+- Worktree layout (2026-11-17): `~/Projects/HealthDashboard` is on `main` (two uncommitted Xcode xcscheme edits carried over; not ours to commit); `~/Projects/HealthDashboard-vo2max` is on `test/vo2max-on-main`. The `HealthDashboard-main` worktree was removed. The `diagnostic/verdict-write-trace` branch is local with no worktree.
 
 ### Branch cleanup (from the 2026-11-16 audit)
 
 - **Safe to delete (merged):** HD `origin/readiness-gate-hold-messaging`; EP `fix/planmemory-inprogress` (local and remote) and `origin/feat/coach-first-mvp`.
-- **Merged 2026-11-17 (safe to delete after your OK):** HD `readiness-display-context`, `fix/refresh-watchdog` (local and remote).
+- **Deleted 2026-11-17 (merged, local and remote):** HD `readiness-display-context`, `fix/refresh-watchdog`, `readiness-gate-hold-messaging`.
 - **Needs merge:** HD `feature/vo2max-capture` / `test/vo2max-on-main`; EP `feat/in-app-guide` (contains 59 other local branches — delete those only after it lands in `main`).
-- **Needs decision:** HD `diagnostic/verdict-write-trace` (+ its `-rebased` copy), both HD stashes, the EP stash; EP `chore/warning-cleanup-OLD-armed` and `fix/next-meso-copy` (not contained in the tip).
+- **Needs decision:** both HD stashes, the EP stash; EP `chore/warning-cleanup-OLD-armed` and `fix/next-meso-copy` (not contained in the tip).
 
 ---
 
