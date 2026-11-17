@@ -123,7 +123,7 @@ Order is priority order. Each item ships alone, tests red first, with `Readiness
 ### Load & recovery inputs (formerly Phase 4/6) — state as of 2026-11-16
 
 - **TRIMP max HR: DONE.** Pinned at 170 bpm (`HealthKitManager.swift:22`, `confirmedMaxHR`), used at `:349`; `observedPeakHR` is a DEBUG comparison only (`:348`, `:372`).
-- **mechanicalLoad double-write: FIXED in EP `ba1c2fb` (2026-07-27)** — "App Group becomes idempotent projection of SessionHistory; kill += doubling". Write path: `SessionView.swift:2495` → `MechanicalLoadProjector.projectDay` (`MechanicalLoadProjector.swift:10-21`) re-sums all `SessionHistory` rows for the day → `MechanicalLoadSharedStore.set` replaces (never adds) the `mechanicalLoad.YYYY-MM-DD` value. Idempotent per day by recomputation, not keyed by session UUID. This **corrects** the 2026-08-27 note (`b60af39`) that the doubling was "structurally impossible" / a restore artifact: an `+=` doubling bug existed and was fixed before that note.
+- **mechanicalLoad double-write: FIXED in EP `ba1c2fb` (2026-07-27)** — "App Group becomes idempotent projection of SessionHistory; kill += doubling". Write path: `SessionView.swift:2495` → `MechanicalLoadProjector.projectDay` (`MechanicalLoadProjector.swift:10-21`) re-sums all `SessionHistory` rows for the day → `MechanicalLoadSharedStore.set` replaces (never adds) the `mechanicalLoad.YYYY-MM-DD` value. Idempotent per day (recompute from SessionHistory), not per session UUID; residual risk: duplicate SessionHistory rows for one session. This **corrects** the 2026-08-27 note (`b60af39`) that the doubling was "structurally impossible" / a restore artifact: an `+=` doubling bug existed and was fixed before that note.
 - **mechanicalLoad durability: PARTIAL.** EP rebuilds the App Group projection on restore (`BackupSnapshotImporter.swift:330-332` `projectAll`; `MechanicalLoadRecoveryMigration`, `91f3420`, 2026-07-27; `PersistedKeyRegistry.swift:75` `.rebuiltOnImport`). **Open item:** verify that `SessionHistory` itself is covered by EP's backups. HD only reads the value (`MechanicalLoadReader.swift`).
 - **Duplicate-workout guard:** a generic guard exists (`HealthKitManager.swift:1043-1061`: same activity type, start and duration each within 90 s). No treadmill-specific guard. Decide whether treadmill needs more; default: no.
 - **Step 4a frequency probe:** closed as not reproducible (`b60af39`); no probe code exists.
@@ -137,11 +137,11 @@ Rule kept from the original vision: independent markers; **no HD fusion / health
 
 ### L1 — VO2max calibration (FIRST)
 
-Purpose: validate the input that feeds Apple's Health Age. Branches: `feature/vo2max-capture` (`a3812c4`) and `test/vo2max-on-main` (`bdcf44a`, `a3812c4` plus merges of `main`); both pushed 2026-11-16, unmerged. Sequence:
+Purpose: validate the input that feeds Apple's Health Age. Branches: `feature/vo2max-capture` (`a3812c4`) and `test/vo2max-on-main` (`bdcf44a`, `a3812c4` plus merges of `main`); both pushed 2026-11-16, unmerged. `test/vo2max-on-main` supersedes `feature/vo2max-capture` (same capture commit plus merges of `main`); work and merge from it. Sequence:
 
 1. Push (done 2026-11-16).
 2. One real strap-paired capture with stored HR verified against what the Watch showed.
-3. Edit-window fix: `CardioCalibrationLogView.swift:309` reseeds from `orig.hrResolvedInterval`; pickers should reseed from the marked start instead. Not applied as of 2026-11-16.
+3. Edit-window fix: re-check on device; `test/vo2max-on-main` may already seed correctly (`CardioCalibrationLogView.swift:357–358` seeds the pickers from `p.date` and `durationSeconds`). Unresolved: `:309` reseeds provenance from `orig.hrResolvedInterval`, and `:305` derives the stored duration from the resolved interval, so the end time may still be resolved-window-anchored.
 4. 6–10 points in a rolling 90-day window, intensity spread across 60–85% of max HR.
 5. Trend tile showing calibrated VO2max beside Apple's VO2 max estimate.
 
@@ -177,7 +177,7 @@ Display it as Apple's number **if** HealthKit exposes it. **Status: not verified
 
 ### Backup
 
-- **HD:** all local-only branches pushed 2026-11-16: `readiness-display-context` (`5057ffe`), `feature/vo2max-capture` (`a3812c4`), `test/vo2max-on-main` (`bdcf44a`), `diagnostic/verdict-write-trace-rebased` (`adf22b6`).
+- **HD:** all local-only branches pushed 2026-11-16: `readiness-display-context` (re-pushed 2026-11-16 through `aa4268c`), `feature/vo2max-capture` (`a3812c4`), `test/vo2max-on-main` (`bdcf44a`), `diagnostic/verdict-write-trace-rebased` (`adf22b6`).
 - **EP:** pushed `feat/in-app-guide` (`106b1a8`), `feat/analytics`, `chore/warning-cleanup-OLD-armed`, `fix/next-meso-copy`, `fix/onboarding-1.2.3`. All other local EP branches are ancestors of `feat/in-app-guide`, so their commits are on the remote via the tip. EP `origin/main` is still `6df1c71` (2026-08-22), 372 commits behind the tip.
 - **Stashes:** patch-exported, still not dropped, local files only (not pushed): `~/Projects/stash-backups/HD-stash0-2026-08-20.patch`, `HD-stash1-2026-05-07.patch`, `EP-stash0-2026-02-21.patch`.
 
