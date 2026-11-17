@@ -390,8 +390,8 @@ final class ReadinessEngineTests: XCTestCase {
     }
 
     func testSleepShortMoreThanOneHourBelow() {
-        // Baseline sleep = 8h. Target = max(7, 8) = 8h. Today = 6.8h (short = 1.2h > 1.0).
-        let result = eval(history(today: point(day: 28, sleep: 6.8)))
+        // Fixed sleep need = 7.5h (ReadinessTuning). Today = 6.4h (short = 1.1h > 1.0 gap).
+        let result = eval(history(today: point(day: 28, sleep: 6.4)))
         XCTAssertTrue(result.flags.contains("Sleep ↓"))
     }
 
@@ -529,8 +529,8 @@ final class ReadinessEngineTests: XCTestCase {
     }
 
     func testSleepDeltaPositiveWhenAboveTarget() {
-        // sleepTarget = max(7, sleepBase). With base = 8h, target = 8h.
-        // Today = 9h → sleepDelta = 9 − 8 = +1.0.
+        // sleepTarget = fixed sleepNeedHours (7.5h), independent of the 8h baseline.
+        // Today = 9h → sleepDelta = 9 − 7.5 = +1.5.
         var hist = (1...27).map { point(day: $0, sleep: 8.0) }
         hist.append(point(day: 28, sleep: 9.0, inBed: 9.5))
         let result = eval(hist)
@@ -1268,5 +1268,64 @@ final class ReadinessEngineTests: XCTestCase {
         let sorted = JSONEncoder()
         sorted.outputFormatting = [.sortedKeys]
         XCTAssertEqual(try sorted.encode(logA), try sorted.encode(logB))
+    }
+
+    // MARK: - R3: fixed sleep need (7.5 h), baseline median 8.2 h
+
+    private func r3History(sleep: Double) -> [DailyHealthPoint] {
+        let base = (1...27).map { point(day: $0, sleep: 8.2, inBed: 8.9) }
+        return base + [point(day: 28, sleep: sleep, inBed: sleep + 0.7)]
+    }
+
+    private func r3SleepDriver(_ r: ReadinessResult) -> ReadinessDriver? {
+        r.drivers.first(where: { $0.label == "Sleep" })
+    }
+
+    func testR3SleepJustUnderBaselineButAboveNeedScoresZeroAndNoDriver() {
+        clearVerdictLog()
+        let r = eval(r3History(sleep: 7.667))
+        XCTAssertNil(r3SleepDriver(r), "7.667 h is above the fixed 7.5 h need: no Sleep driver")
+        XCTAssertFalse(r.flags.contains("Sleep ↓"))
+    }
+
+    func testR3SleepSlightlyUnderNeedScoresMinusOneWithDriverText() throws {
+        clearVerdictLog()
+        let r = eval(r3History(sleep: 6.917))
+        let d = try XCTUnwrap(r3SleepDriver(r))
+        XCTAssertTrue(d.isNegative)
+        XCTAssertEqual(d.impact, 1, "6.917 h is 0.583 h short → −1")
+        XCTAssertEqual(r.driverDisplays().first(where: { $0.label == "Sleep" })?.subtitle,
+                       "0.6 h under target.")
+    }
+
+    func testR3SleepShort1ClusterFlagUsesGapFromFixedNeed() throws {
+        clearVerdictLog()
+        _ = eval(r3History(sleep: 6.417))
+        let rec = try XCTUnwrap(SharedStore.loadVerdictLog().first { $0.dateISO == todayISO() })
+        XCTAssertTrue(rec.sleepShort1, "6.417 h ≤ 7.5 − 1.0")
+        clearVerdictLog()
+        _ = eval(r3History(sleep: 6.6))
+        let rec2 = try XCTUnwrap(SharedStore.loadVerdictLog().first { $0.dateISO == todayISO() })
+        XCTAssertFalse(rec2.sleepShort1, "6.6 h is within 1.0 h of need")
+    }
+
+    func testR3RecoveryNightPromotionComparesToNeedPlusMargin() {
+        clearVerdictLog()
+        let hi = eval(r3History(sleep: 8.6))
+        XCTAssertEqual(r3SleepDriver(hi)?.isNegative, false, "8.6 > 7.5 + 1.0 → +1")
+        XCTAssertEqual(r3SleepDriver(hi)?.impact, 1)
+        clearVerdictLog()
+        let lo = eval(r3History(sleep: 8.4))
+        XCTAssertNil(r3SleepDriver(lo), "8.4 ≤ 8.5 → no +1")
+    }
+
+    func testR3TileDeltaMatchesDriverRowNumberForSameNight() throws {
+        clearVerdictLog()
+        let r = eval(r3History(sleep: 6.917))
+        let delta = try XCTUnwrap(r.sleepDelta)
+        XCTAssertEqual(delta, 6.917 - 7.5, accuracy: 1e-9)
+        let tile = String(format: "%.1f", abs(delta))
+        let row = try XCTUnwrap(r.driverDisplays().first(where: { $0.label == "Sleep" })?.subtitle)
+        XCTAssertEqual(row, "\(tile) h under target.")
     }
 }
