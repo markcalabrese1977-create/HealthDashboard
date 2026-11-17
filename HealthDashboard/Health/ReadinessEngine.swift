@@ -98,8 +98,8 @@ enum ReadinessEngine {
         // Respiratory rate baseline (sleep RR)
         let rrBase = median(baselineSlice.compactMap { $0.respiratoryRate })
 
-        // Sleep target: simple and stable
-        let sleepTarget = max(7.0, sleepBase ?? 7.0)
+        // Sleep target: a stated need, not a rolling median (sleepBase is debug output only).
+        let sleepTarget = ReadinessTuning.sleepNeedHours
 
         let effBase = median(
             baselineSlice.compactMap { ReadinessEngine.efficiency(asleep: $0.sleepHours, inBed: $0.sleepInBedHours) }
@@ -171,13 +171,13 @@ enum ReadinessEngine {
         // Sleep duration score (asleep hours vs target)
         if let cur = today?.sleepHours {
             let short = sleepTarget - cur
-            if short <= 0.5 { sleepScore = 0 }
-            else if short <= 1.5 { sleepScore = -1 }
-            else if short <= 2.5 { sleepScore = -2 }
+            if short <= ReadinessTuning.sleepNoPenaltyMaxShortHours { sleepScore = 0 }
+            else if short <= ReadinessTuning.sleepMinus1MaxShortHours { sleepScore = -1 }
+            else if short <= ReadinessTuning.sleepMinus2MaxShortHours { sleepScore = -2 }
             else { sleepScore = -3 }
 
             // Tier 1 promotion: meaningfully above-average recovery night.
-            if let base = sleepBase, cur > base + 0.5 {
+            if cur > sleepTarget + ReadinessTuning.sleepRecoveryNightMarginHours {
                 sleepScore = 1
             }
 
@@ -333,7 +333,7 @@ enum ReadinessEngine {
 
         let sleepShort1: Bool = {
             guard let cur = today?.sleepHours else { return false }
-            return cur <= (sleepTarget - 1.0)
+            return cur <= (sleepTarget - ReadinessTuning.sleepShort1GapHours)
         }()
 
         let tempUp03: Bool = {

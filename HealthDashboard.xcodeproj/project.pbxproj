@@ -136,6 +136,7 @@
 				Health/MechanicalLoadReader.swift,
 				Health/MetricDetailView.swift,
 				Health/ReadinessEngine.swift,
+				Health/ReadinessTuning.swift,
 				Health/WeeklySummaryView.swift,
 				Shared/BodyMeasurementsUI.swift,
 				Shared/DashboardCard.swift,
