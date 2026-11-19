@@ -92,6 +92,7 @@ Order is priority order. Each item ships alone, tests red first, with `Readiness
 - Later phase: `NightContextTag.warmRoom` downgrades temp to watch-only.
 - Open question: "Day 3 of temp on 11/17 with heat on all three nights — consider bringing the warmRoom downgrade into R1 rather than a later phase."
 - Also fix: `wristTempDeltaC` holds absolute °C (`HealthKitManager.swift:472`). Rename it or correct the comment at `SharedHealthSnapshot.swift:91` (and the lines above it, which describe it as a deviation near 0).
+- Red tests — pin test (passes on current engine, guards the refactor): wrist temp −0.5 °C → tempScore 0, tempUp03 false, no Wrist Temp driver. Scoring is elevation-only today (ReadinessEngine ~208–216); R1 must not change that.
 - Exit gate: 11/16-style inputs (temp +1.3, RHR/RR near baseline) produce no temp score and a watch flag; temp with RHR or RR corroboration, or sustained ≥ 3 days at ≥ 0.7, still scores.
 
 **R2 — Score-path gate**
